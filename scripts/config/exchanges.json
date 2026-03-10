@@ -1,0 +1,46 @@
+{
+  "exchanges": {
+    "NYSE": {
+      "name": "New York Stock Exchange",
+      "code": "NYSE",
+      "country": "US",
+      "currency": "USD",
+      "trading_hours": "09:30-16:00 EST"
+    },
+    "NASDAQ": {
+      "name": "NASDAQ Stock Market",
+      "code": "NASDAQ",
+      "country": "US",
+      "currency": "USD",
+      "trading_hours": "09:30-16:00 EST"
+    },
+    "XETRA": {
+      "name": "Deutsche B\u00f6rse XETRA",
+      "code": "XETRA",
+      "country": "DE",
+      "currency": "EUR",
+      "trading_hours": "09:00-17:30 CET"
+    },
+    "LSE": {
+      "name": "London Stock Exchange",
+      "code": "LSE",
+      "country": "GB",
+      "currency": "GBP",
+      "trading_hours": "08:00-16:30 GMT"
+    },
+    "PA": {
+      "name": "Euronext Paris",
+      "code": "PA",
+      "country": "FR",
+      "currency": "EUR",
+      "trading_hours": "09:00-17:30 CET"
+    },
+    "AS": {
+      "name": "Euronext Amsterdam",
+      "code": "AS",
+      "country": "NL",
+      "currency": "EUR",
+      "trading_hours": "09:00-17:30 CET"
+    }
+  }
+}

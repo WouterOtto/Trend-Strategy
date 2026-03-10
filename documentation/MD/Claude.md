@@ -1,0 +1,1 @@
+This document is used to provide Claude certain rules that must be followed always.

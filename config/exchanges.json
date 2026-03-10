@@ -1,0 +1,71 @@
+{
+  "exchanges": {
+    "NYSE": {
+      "name": "New York Stock Exchange",
+      "code": "NYSE",
+      "country": "US",
+      "currency": "USD",
+      "trading_hours": "09:30-16:00 EST",
+      "timezone": "America/New_York",
+      "consolidation_ready": true
+    },
+    "NASDAQ": {
+      "name": "NASDAQ Stock Market",
+      "code": "NASDAQ",
+      "country": "US",
+      "currency": "USD",
+      "trading_hours": "09:30-16:00 EST",
+      "timezone": "America/New_York",
+      "consolidation_ready": false
+    },
+    "XETRA": {
+      "name": "Deutsche B\u00f6rse XETRA",
+      "code": "XETRA",
+      "country": "DE",
+      "currency": "EUR",
+      "trading_hours": "09:00-17:30 CET",
+      "timezone": "Europe/Berlin",
+      "consolidation_ready": false
+    },
+    "LSE": {
+      "name": "London Stock Exchange",
+      "code": "LSE",
+      "country": "GB",
+      "currency": "GBP",
+      "trading_hours": "08:00-16:30 GMT",
+      "timezone": "Europe/London",
+      "consolidation_ready": false
+    },
+    "PA": {
+      "name": "Euronext Paris",
+      "code": "PA",
+      "country": "FR",
+      "currency": "EUR",
+      "trading_hours": "09:00-17:30 CET",
+      "timezone": "Europe/Paris",
+      "consolidation_ready": false
+    },
+    "AS": {
+      "name": "Euronext Amsterdam",
+      "code": "AS",
+      "country": "NL",
+      "currency": "EUR",
+      "trading_hours": "09:00-17:30 CET",
+      "timezone": "Europe/Amsterdam",
+      "consolidation_ready": false
+    },
+    "CC": {
+      "name": "Crypto Currency",
+      "code": "CC",
+      "country": "Global",
+      "currency": "USD",
+      "trading_hours": "24/7",
+      "timezone": "UTC",
+      "symbols_whitelist": [
+        "BTC-USD",
+        "ETH-USD"
+      ],
+      "consolidation_ready": false
+    }
+  }
+}
