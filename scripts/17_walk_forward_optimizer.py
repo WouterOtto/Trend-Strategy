@@ -214,27 +214,41 @@ except ModuleNotFoundError:
 
 
 # ===========================================================================
-# PARAMETER GRID  (Architecture v3.5 — 2,880 combinations)
+# PARAMETER GRID  (Architecture v3.8 — 3,600 combinations)
+#
+# Grid evolution log:
+#   v3.3  1,296 combos — original grid (multiple params at edge)
+#   v3.5  2,880 combos — expanded stop multipliers downward
+#   v3.7  2,880 combos — OOS 6m→12m, stability bug fixes
+#   v3.8  3,600 combos — grid edges resolved per WFO run 3 red flags:
+#           adx_threshold  : added 10 (optimizer hit 15-min in 5/7 windows)
+#           init_stop_mult : added 1.5 (optimizer hit 2.0-min in 7/7 windows)
+#           trail_stop_mult: added 4.5, 5.0 (optimizer hit 4.0-max in 7/7 windows)
+#           max_positions  : added 30 (optimizer hit 25-max in 7/7 windows)
+#           sma_slow       : restored 150, 350 (narrowing in v3.7 was premature)
+#           sma_fast       : unchanged [30,50,100] — still unstable CV=0.374
 # ===========================================================================
 
 PARAM_GRID = {
-    "sma_fast":          [30, 50, 100],
-    "sma_slow":          [200, 250, 300],   # extended: 300 was at edge (v3.3 selected it)
-    "adx_threshold":     [15, 20, 25],
-    "init_stop_mult":    [2.0, 2.5, 3.0, 3.5],  # extended: 2.5 was at edge (W2 selected it)
-    "trail_stop_mult":   [3.0, 3.5, 4.0],  # extended: 3.5 was at edge (W1+W2 selected it)
-    "max_positions":     [15, 20, 25],
+    "sma_fast":          [30, 50, 100],           # CV=0.374 unstable — keep full range
+    "sma_slow":          [200, 250, 300],          # CV=0.092 excellent — centred on mean=264
+    "adx_threshold":     [10, 15, 20, 25],         # expanded down: hit 15-min in 5/7 windows
+    "init_stop_mult":    [1.5, 2.0, 2.5, 3.0, 3.5], # expanded down: hit 2.0-min in 7/7 windows
+    "trail_stop_mult":   [3.0, 3.5, 4.0, 4.5, 5.0], # expanded up: hit 4.0-max in 7/7 windows
+    "max_positions":     [15, 20, 25, 30],         # expanded up: hit 25-max in 7/7 windows
 }
-# Grid stats: 3×4×3×4×5×4 = 2,880 combinations | 3×4 = 12 indicator buckets (240 combos/bucket)
+# Grid stats: 3×3×4×5×5×4 = 3,600 combinations | 3×3 = 9 indicator buckets (400 combos/bucket)
+# Optimal --n-workers 9 (all buckets complete in one parallel round)
 
 PARAM_GRID_FAST = {
-    "sma_fast":          [50, 100],
-    "sma_slow":          [150, 200, 250],         # was [150, 200] — added 250 to avoid edge
-    "adx_threshold":     [15, 20],
-    "init_stop_mult":    [2.0, 2.5, 3.0],         # extended downward to match full grid
-    "trail_stop_mult":   [3.0, 3.5, 4.0],         # centred on realistic optimum range
-    "max_positions":     [15, 20],
+    "sma_fast":          [50, 100],                # representative subset of full range
+    "sma_slow":          [200, 250, 300],           # matches full grid sma_slow
+    "adx_threshold":     [10, 20],                  # expanded: include new lower bound
+    "init_stop_mult":    [1.5, 2.0, 2.5],           # expanded: include new lower bound
+    "trail_stop_mult":   [3.5, 4.0, 4.5],           # centred on current optimum range
+    "max_positions":     [20, 25],                  # centred on current optimum range
 }
+# Fast grid stats: 2×3×2×3×3×2 = 216 combinations | 2×3 = 6 indicator buckets (36 combos/bucket)
 # Fast grid stats: 2×3×2×3×3×2 = 216 combinations | 2×3 = 6 indicator buckets (36 combos/bucket)
 
 # Fixed params not in the optimization grid
