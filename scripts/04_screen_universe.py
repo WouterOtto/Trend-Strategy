@@ -47,6 +47,7 @@ import numpy as np
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent
+DATA_CACHE_DIR = PROJECT_ROOT / "data_cache"
 DATA_LOAD_DIR = PROJECT_ROOT.parent / "data_load" / "data_cache"
 # Input
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -54,7 +55,6 @@ CONSOLIDATED_DIR = DATA_LOAD_DIR / "consolidated"
 FUNDAMENTALS_DIR = DATA_LOAD_DIR / "fundamentals"
 CORPORATE_ACTIONS_DIR = DATA_LOAD_DIR / "corporate_actions"
 # Output
-DATA_CACHE_DIR = PROJECT_ROOT / "data_cache"
 QUALIFIED_DIR = DATA_CACHE_DIR / "qualified"
 LOG_DIR = PROJECT_ROOT / "logs"
 

@@ -67,8 +67,11 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_CACHE_DIR = PROJECT_ROOT / "data_cache"
-CONSOLIDATED_DIR = DATA_CACHE_DIR / "consolidated"
+DATA_LOAD_DIR = PROJECT_ROOT.parent / "data_load" / "data_cache"
+# Input
 QUALIFIED_DIR = DATA_CACHE_DIR / "qualified"
+CONSOLIDATED_DIR = DATA_LOAD_DIR / "consolidated"
+# Output
 INDICATORS_DIR = DATA_CACHE_DIR / "indicators"
 METADATA_DIR = DATA_CACHE_DIR / "metadata"
 LOG_DIR = PROJECT_ROOT / "logs"
