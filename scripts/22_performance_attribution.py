@@ -117,8 +117,10 @@ except ImportError:
 PROJECT_ROOT      = Path(__file__).parent.parent
 DATA_DIR          = PROJECT_ROOT / "data"
 DATA_CACHE_DIR    = PROJECT_ROOT / "data_cache"
-CONSOLIDATED_DIR  = DATA_CACHE_DIR / "consolidated"
-FUNDAMENTALS_DIR  = DATA_CACHE_DIR / "fundamentals"
+DATA_LOAD_DIR = PROJECT_ROOT.parent / "data_load" / "data_cache"
+
+CONSOLIDATED_DIR  = DATA_LOAD_DIR / "consolidated"
+FUNDAMENTALS_DIR  = DATA_LOAD_DIR / "fundamentals"
 PERF_DIR          = DATA_DIR / "performance" / "attribution"
 REPORTS_DIR       = PROJECT_ROOT / "reports" / "performance"
 LOG_DIR           = PROJECT_ROOT / "logs"
