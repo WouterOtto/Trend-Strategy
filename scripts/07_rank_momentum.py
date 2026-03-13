@@ -40,6 +40,7 @@ Inputs:
     - data_cache/signals/qualified_trends.json
     - data_cache/indicators/{symbol}_indicators.parquet   (one file per symbol)
     - data_cache/qualified/qualified_symbols.json          (for name/sector/exchange)
+    - data_cache/fundamentals/company_info.json
 
 Outputs:
     - data_cache/signals/momentum_ranked.json    (ranked list, all qualified)
@@ -68,13 +69,17 @@ import numpy as np
 # CONFIGURATION
 # ============================================================================
 
-PROJECT_ROOT = Path(__file__).parent.parent
-DATA_CACHE_DIR  = PROJECT_ROOT / "data_cache"
-INDICATORS_DIR  = DATA_CACHE_DIR / "indicators"
-SIGNALS_DIR     = DATA_CACHE_DIR / "signals"
-QUALIFIED_DIR   = DATA_CACHE_DIR / "qualified"
-REPORTS_DIR     = PROJECT_ROOT / "reports" / "signals"
-LOG_DIR         = PROJECT_ROOT / "logs"
+PROJECT_ROOT      = Path(__file__).parent.parent
+DATA_CACHE_DIR    = PROJECT_ROOT / "data_cache"
+DATA_LOAD_DIR     = PROJECT_ROOT.parent / "data_load" / "data_cache"
+# Input
+INDICATORS_DIR    = DATA_CACHE_DIR / "indicators"
+QUALIFIED_DIR     = DATA_CACHE_DIR / "qualified"
+# Output
+SIGNALS_DIR       = DATA_CACHE_DIR / "signals"
+fundamentals_file = DATA_LOAD_DIR / 'fundamentals' / 'company_info.json'
+REPORTS_DIR       = PROJECT_ROOT / "reports" / "signals"
+LOG_DIR           = PROJECT_ROOT / "logs"
 
 # --- Momentum formula parameters (do NOT change without architecture approval) ---
 MOMENTUM_SMA_PERIOD = 200   # Primary ranking formula uses SMA_200 deviation
@@ -177,7 +182,7 @@ def load_qualified_metadata() -> Dict:
     logger.info(f"â Loaded metadata for {len(metadata)} symbols")
     
     # Load fundamentals to get instrument_type (asset_class)
-    fundamentals_file = PROJECT_ROOT / 'data_cache' / 'fundamentals' / 'company_info.json'
+    
     if fundamentals_file.exists():
         try:
             with open(fundamentals_file, 'r') as f:
