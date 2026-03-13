@@ -126,17 +126,20 @@ if sys.stdout.encoding != 'utf-8':
 # PATH CONFIGURATION
 # ============================================================================
 
-PROJECT_ROOT    = Path(__file__).parent.parent
-DATA_DIR        = PROJECT_ROOT / "data"
-DATA_CACHE_DIR  = PROJECT_ROOT / "data_cache"
-SIGNALS_DIR     = DATA_CACHE_DIR / "signals"
-PORTFOLIO_DIR   = DATA_CACHE_DIR / "portfolio"
-INDICATORS_DIR  = DATA_CACHE_DIR / "indicators"
+PROJECT_ROOT     = Path(__file__).parent.parent
+DATA_DIR         = PROJECT_ROOT / "data"
+DATA_CACHE_DIR   = PROJECT_ROOT / "data_cache"
+DATA_LOAD_DIR    = PROJECT_ROOT.parent / "data_load" / "data_cache"
+# Input
+SIGNALS_DIR      = DATA_CACHE_DIR / "signals"
+PORTFOLIO_DIR    = DATA_CACHE_DIR / "portfolio"
+INDICATORS_DIR   = DATA_CACHE_DIR / "indicators"
 CONSOLIDATED_DIR = DATA_CACHE_DIR / "consolidated"
-METADATA_DIR    = DATA_CACHE_DIR / "metadata"
-REPORTS_DIR     = PROJECT_ROOT / "reports" / "rebalancing"
-LOG_DIR         = PROJECT_ROOT / "logs"
-CONFIG_DIR      = PROJECT_ROOT / "config"
+METADATA_DIR     = DATA_LOAD_DIR / "metadata"
+# Output
+REPORTS_DIR      = PROJECT_ROOT / "reports" / "rebalancing"
+LOG_DIR          = PROJECT_ROOT / "logs"
+CONFIG_DIR       = PROJECT_ROOT / "config"
 
 # ============================================================================
 # STRATEGY CONSTANTS  (match architecture v3.2 â€“ do NOT change without review)
@@ -659,7 +662,7 @@ def load_active_exchanges() -> set:
         Set of uppercase exchange code strings, e.g. {"NYSE"}.
     """
     # ── Source 1: consolidation_state.json ───────────────────────────────────
-    consolidation_state_file = DATA_CACHE_DIR / "metadata" / "consolidation_state.json"
+    consolidation_state_file = METADATA_DIR / "consolidation_state.json"
 
     if consolidation_state_file.exists():
         try:
