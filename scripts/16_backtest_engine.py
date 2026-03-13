@@ -107,10 +107,13 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 PROJECT_ROOT     = Path(__file__).parent.parent
 DATA_CACHE_DIR   = PROJECT_ROOT / "data_cache"
-CONSOLIDATED_DIR = DATA_CACHE_DIR / "consolidated"
-INDICATORS_DIR   = DATA_CACHE_DIR / "indicators"
+DATA_LOAD_DIR = PROJECT_ROOT.parent / "data_load" / "data_cache"
+# Input
+CONSOLIDATED_DIR = DATA_LOAD_DIR / "consolidated"
+CORP_ACTIONS_DIR = DATA_LOAD_DIR / "corporate_actions"
+# INDICATORS_DIR   = DATA_CACHE_DIR / "indicators"
 QUALIFIED_DIR    = DATA_CACHE_DIR / "qualified"
-CORP_ACTIONS_DIR = DATA_CACHE_DIR / "corporate_actions"
+# Output
 BACKTEST_DIR     = DATA_CACHE_DIR / "backtest"
 REPORTS_DIR      = PROJECT_ROOT / "reports" / "backtest"
 LOG_DIR          = PROJECT_ROOT / "logs"
