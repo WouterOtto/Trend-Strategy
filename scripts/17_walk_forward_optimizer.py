@@ -162,8 +162,11 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ---------------------------------------------------------------------------
 PROJECT_ROOT   = Path(__file__).resolve().parent.parent
 DATA_CACHE_DIR = PROJECT_ROOT / "data_cache"
-CONSOL_DIR     = DATA_CACHE_DIR / "consolidated"
+DATA_LOAD_DIR  = PROJECT_ROOT.parent / "data_load" / "data_cache"
+# Input
+CONSOL_DIR     = DATA_LOAD_DIR / "consolidated"
 QUALIFIED_DIR  = DATA_CACHE_DIR / "qualified"
+# Output
 BACKTEST_DIR   = DATA_CACHE_DIR / "backtest"
 WFO_DIR        = BACKTEST_DIR / "walk_forward"
 REPORTS_DIR    = PROJECT_ROOT / "reports" / "backtest"
