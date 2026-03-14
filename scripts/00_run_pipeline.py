@@ -113,9 +113,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Maps canonical script numbers → file names
 SCRIPT_MAP: dict[int, str] = {
-    1:  "01_download_eodhd_bulk.py",
-    2:  "02_download_yahoo_fundamentals.py",
-    3:  "03_consolidate_validate_data.py",
+    #1:  "01_download_eodhd_bulk.py",
+    #2:  "02_download_yahoo_fundamentals.py",
+    #3:  "03_consolidate_validate_data.py",
     4:  "04_screen_universe.py",
     5:  "05_calculate_indicators.py",
     6:  "06_qualify_trends.py",
@@ -139,9 +139,9 @@ SCRIPT_MAP: dict[int, str] = {
 }
 
 SCRIPT_LABELS: dict[int, str] = {
-    1:  "Download EODHD bulk data",
-    2:  "Download Yahoo fundamentals",
-    3:  "Consolidate & validate data",
+    #1:  "Download EODHD bulk data",
+    #2:  "Download Yahoo fundamentals",
+    #3:  "Consolidate & validate data",
     4:  "Screen universe",
     5:  "Calculate indicators",
     6:  "Qualify trends",
@@ -166,11 +166,11 @@ SCRIPT_LABELS: dict[int, str] = {
 
 # Pipeline step sequences per mode
 PIPELINES: dict[str, List[int]] = {
-    "setup":      [1, 2, 3, 4, 5, 6, 7],           # One-time: full download + validate
-    "daily":      [1, 3, 14],                      # Daily: download + consolidate portfolio + monitor
-    "weekly":     [1, 3, 9, 10, 14],               # Weekly: download + consolidate all + stops + exits + monitor
-    "monthly":    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 22, 23, 24],  # Monthly: full rebalancing + analytics
-    "quarterly":  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 22, 23, 24],  # Quarterly: + data validation + analytics
+    "setup":      [4, 5, 6, 7],           # One-time: full download + validate
+    "daily":      [14],                      # Daily: download + consolidate portfolio + monitor
+    "weekly":     [9, 10, 14],               # Weekly: download + consolidate all + stops + exits + monitor
+    "monthly":    [4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 22, 23, 24],  # Monthly: full rebalancing + analytics
+    "quarterly":  [4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 22, 23, 24],  # Quarterly: + data validation + analytics
     "backtest":   [16, 17, 18, 19, 20, 21],        # Backtest: full validation pipeline (long-running)
     "validation": [19, 20, 21],                    # Validation: validate existing backtest results (fast)
     "analytics":  [22, 23, 24],                    # Analytics: performance review only (fast)
@@ -204,22 +204,11 @@ REQUIRED_PACKAGES: dict[str, str] = {
     "pyarrow":  "pyarrow",
 }
 
-# Scripts that are "soft" — pipeline continues even on failure.
-# Maps script_num → optional cache path for the warning message.
-# None = always soft (no cache required to continue).
-SOFT_STEPS: dict[int, Optional[Path]] = {
-    # Yahoo fundamentals: enrichment data only (sector, name, market cap).
-    # Core trend signals (price, SMA, ADX, ATR) come from EODHD — Script 02
-    # never blocks the pipeline.  It will be retried on the next run.
-    2: Path("data_cache/fundamentals/company_info.json"),
-}
-
 # Per-script timeout overrides (seconds).
 # Script 02 fetches Yahoo fundamentals for thousands of symbols — it legitimately
 # needs 60-120 min on a full run.  The global --timeout applies to all other scripts.
 SCRIPT_TIMEOUTS: dict[int, int] = {
-    2: 14400,  # 4 hours  — Yahoo fundamentals (rate-limited, large universe)
-    3:  3600,  # 1 hour (default)  — Consolidate-only
+    # 3:  3600,  # 1 hour (default)  — Consolidate-only
     # Note: Script 03 timeout is dynamically adjusted based on mode:
     #   - daily mode:      600s (10 min)    — portfolio symbols only (~10-50 symbols)
     #   - weekly mode:     43200s (12 hours) — all symbols, incremental consolidation
@@ -363,67 +352,6 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
     namespace `ns`.  Only flags relevant to each script are included.
     """
     a: List[str] = []
-
-    # ── Script 1: EODHD bulk download ────────────────────────────────────────
-    if num == 1:
-        mode = getattr(ns, "download_mode", "incremental")
-        a += ["--mode", mode]
-        if mode == "incremental" or getattr(ns, "force", False):
-            a += ["--force"]
-
-    # ── Script 2: Yahoo fundamentals ─────────────────────────────────────────
-    # --mode is required: map from master download_mode (initial→full, else incremental)
-    if num == 2:
-        yahoo_mode = "full" if getattr(ns, "download_mode", "incremental") == "initial" else "incremental"
-        a += ["--mode", yahoo_mode]
-        yahoo_max = getattr(ns, "yahoo_max_symbols", None)
-        if yahoo_max:
-            a += ["--max-symbols", str(yahoo_max)]
-
-    # ── Script 3: Consolidate & validate ─────────────────────────────────────
-    if num == 3:
-        # Determine consolidation mode based on effective_mode
-        effective_mode = getattr(ns, "effective_mode", getattr(ns, "mode", None))
-        
-        if effective_mode == "daily":
-            # Daily: consolidate ONLY current portfolio symbols (fast!)
-            a += ["--mode", "consolidate-only", "--type", "incremental"]
-            
-            # Load portfolio symbols from latest position_sizes.json
-            portfolio_file = SCRIPT_DIR.parent / "data_cache" / "portfolio" / "position_sizes.json"
-            if portfolio_file.exists():
-                try:
-                    import json
-                    with open(portfolio_file) as f:
-                        portfolio_data = json.load(f)
-                    # Extract symbols from position_sizes
-                    if isinstance(portfolio_data, dict) and "positions" in portfolio_data:
-                        symbols = [p["symbol"] for p in portfolio_data["positions"]]
-                        if symbols:
-                            a += ["--symbols", ",".join(symbols)]
-                            logger.info(f"  Daily mode: consolidating {len(symbols)} portfolio symbols only")
-                        else:
-                            logger.warning("  Daily mode: no symbols in portfolio, consolidating all")
-                    else:
-                        logger.warning("  Daily mode: portfolio format unexpected, consolidating all")
-                except Exception as e:
-                    logger.warning(f"  Daily mode: couldn't read portfolio ({e}), consolidating all")
-            else:
-                logger.warning("  Daily mode: no portfolio found, consolidating all symbols")
-        
-        elif effective_mode in ("weekly", "monthly"):
-            # Weekly/monthly: consolidate-only with incremental type (append new dates, no validation)
-            a += ["--mode", "consolidate-only", "--type", "incremental"]
-        elif effective_mode == "quarterly":
-            # Quarterly: incremental consolidation + full validation
-            a += ["--mode", "incremental"]
-        elif effective_mode == "setup":
-            # Setup: full rebuild from scratch with validation and force flag
-            a += ["--mode", "full", "--force"]
-        else:
-            # Fallback: use user-specified consolidate_mode or default to incremental
-            consolidate_mode = getattr(ns, "consolidate_mode", "incremental")
-            a += ["--mode", consolidate_mode]
 
     # ── Scripts 4-7, 9-10: as-of-date ────────────────────────────────────────
     if num in (4, 5, 6, 7, 9, 10):
@@ -603,7 +531,7 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
 
     # ── Universal: --dry-run ──────────────────────────────────────────────────
     # Script 2 does not support --dry-run; Script 15 only writes HTML reports
-    if getattr(ns, "dry_run", False) and num not in (2, 15):
+    if getattr(ns, "dry_run", False) and num not in (15):
         a += ["--dry-run"]
 
     return a
@@ -728,23 +656,6 @@ def run_step(
     stderr_tail = "\n".join(proc.stderr.splitlines()[-_TAIL_LINES:])
 
     status = "OK" if rc == 0 else "FAIL"
-
-    # ── Soft-step handling ────────────────────────────────────────────────────
-    # Soft steps never abort the pipeline regardless of cache existence.
-    if status == "FAIL" and num in SOFT_STEPS:
-        cache_path  = SOFT_STEPS[num]
-        resolved    = _resolve_cache_path(cache_path)
-        cache_note  = (
-            f"stale cache available at {resolved}"
-            if resolved
-            else f"no cache found (searched {SCRIPT_DIR / cache_path} and "
-                 f"{SCRIPT_DIR.parent / cache_path})"
-        )
-        logger.warning(
-            f"  Script {num} failed — soft step, pipeline will continue "
-            f"({cache_note})."
-        )
-        status = "WARN"
 
     # Stream output to logger at appropriate level
     for line in proc.stdout.splitlines():
@@ -964,41 +875,41 @@ def build_parser() -> argparse.ArgumentParser:
             EXAMPLES
             --------
             # One-time setup (full historical download):
-            python 00_run_pipeline.py setup --force
+            python scripts/00_run_pipeline.py setup --force
 
             # Daily monitoring (fast):
-            python 00_run_pipeline.py daily --account-equity 50000 --vix 17.2
+            python scripts/00_run_pipeline.py daily --account-equity 50000 --vix 17.2
 
             # Monthly rebalancing (no validation):
-            python 00_run_pipeline.py monthly \\
+            python scripts/00_run_pipeline.py monthly \\
                 --as-of-date 2026-01-31 --account-equity 50000 --vix 18.5
 
             # Quarterly rebalancing + data quality audit:
-            python 00_run_pipeline.py quarterly \\
+            python scripts/00_run_pipeline.py quarterly \\
                 --as-of-date 2026-03-31 --account-equity 50000 --vix 16.8
 
             # Re-generate PDF report only:
-            python 00_run_pipeline.py report --month 2026-01
+            python scripts/00_run_pipeline.py report --month 2026-01
 
             # Dry-run (no files written):
-            python 00_run_pipeline.py monthly \\
+            python scripts/00_run_pipeline.py monthly \\
                 --as-of-date 2026-01-31 --account-equity 50000 --dry-run
 
             # Custom step selection:
-            python 00_run_pipeline.py custom --steps 4,5,6 --as-of-date 2026-01-31
+            python scripts/00_run_pipeline.py custom --steps 4,5,6 --as-of-date 2026-01-31
 
             # Custom with monthly behavior (consolidate-only Script 03):
-            python 00_run_pipeline.py custom --as-monthly \\
+            python scripts/00_run_pipeline.py custom --as-monthly \\
                 --steps 1,3,4,5,6,7,8,11,12 \\
                 --as-of-date 2026-01-31 --account-equity 50000
 
             # Custom with quarterly behavior (full validation):
-            python 00_run_pipeline.py custom --as-quarterly \\
+            python scripts/00_run_pipeline.py custom --as-quarterly \\
                 --steps 3,4,5,6,7 \\
                 --as-of-date 2026-03-31 --account-equity 50000
 
             # Continue pipeline even after a failure:
-            python 00_run_pipeline.py monthly \\
+            python scripts/00_run_pipeline.py monthly \\
                 --as-of-date 2026-01-31 --account-equity 50000 --no-abort
         """),
     )
@@ -1147,27 +1058,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # ── Download / consolidation modes ───────────────────────────────────────
-    parser.add_argument(
-        "--download-mode",
-        dest="download_mode",
-        choices=["initial", "incremental"],
-        default="incremental",
-        help=(
-            "Download mode for Script 01. "
-            "'initial' = full historical rebuild (use with setup mode). "
-            "'incremental' = smart delta update (default for all other modes)."
-        ),
-    )
-
-    parser.add_argument(
-        "--consolidate-mode",
-        dest="consolidate_mode",
-        choices=["full", "incremental"],
-        default="incremental",
-        help="Processing mode for Script 03 (consolidate & validate). Default: incremental.",
-    )
-
     # ── Custom step selection ─────────────────────────────────────────────────
     parser.add_argument(
         "--steps",
@@ -1261,19 +1151,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Skip automatic pip installation of missing packages. "
             "Pipeline will fail immediately if a required package is absent."
-        ),
-    )
-
-    parser.add_argument(
-        "--yahoo-max-symbols",
-        metavar="N",
-        dest="yahoo_max_symbols",
-        type=int,
-        default=None,
-        help=(
-            "Limit Script 02 to fetching N symbols from Yahoo Finance. "
-            "Useful for testing or when re-running after a partial fetch. "
-            "Omit to process the full universe (may take 60-120 min)."
         ),
     )
 
@@ -1447,30 +1324,6 @@ def main() -> int:
         ns.consolidate_mode  = "full"
         ns.effective_mode    = "setup"
         steps = PIPELINES["setup"]
-    elif ns.mode == "daily":
-        # Daily: portfolio-only consolidation (very fast)
-        SCRIPT_TIMEOUTS[3] = 600  # 10 minutes (usually completes in <1 min)
-        ns.effective_mode = "daily"
-        steps = PIPELINES["daily"]
-    elif ns.mode == "weekly":
-        # Weekly: extend Script 03 timeout to 12 hours
-        # Consolidation processes week's worth of data (5 trading days)
-        SCRIPT_TIMEOUTS[3] = 43200  # 12 hours
-        ns.effective_mode = "weekly"
-        steps = PIPELINES["weekly"]
-    elif ns.mode == "monthly":
-        # Monthly: extend Script 03 timeout to 12 hours
-        # Incremental consolidation can take hours when processing multiple trading days
-        # across 23K symbols (5 dates × 5K symbols/exchange × 7 exchanges = 175K appends)
-        SCRIPT_TIMEOUTS[3] = 43200  # 12 hours
-        ns.effective_mode = "monthly"
-        steps = PIPELINES["monthly"]
-    elif ns.mode == "quarterly":
-        # Quarterly: full rebalancing + data validation
-        # Extend Script 03 timeout for validation (4 hours instead of 1 hour)
-        SCRIPT_TIMEOUTS[3] = 14400
-        ns.effective_mode = "quarterly"
-        steps = PIPELINES["quarterly"]
     elif ns.mode == "analytics":
         # Analytics: performance review only (no rebalancing)
         ns.effective_mode = "analytics"
