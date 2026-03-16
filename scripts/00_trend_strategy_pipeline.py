@@ -23,58 +23,55 @@ PIPELINE MODES
 
 QUICK-START
 -----------
-  # One-time setup (downloads 18 months of data + validates):
-  python 00_run_pipeline.py setup --force
-
   # Daily monitoring (consolidates portfolio symbols only, very fast):
-  python 00_run_pipeline.py daily --account-equity 50000
+  python scripts/00_trend_strategy_pipeline.py daily --account-equity 50000
 
   # Weekly run (every Saturday - consolidate all + refresh stops/exits):
-  python 00_run_pipeline.py weekly \\
-      --as-of-date 2026-03-01 \\
+  python scripts/00_trend_strategy_pipeline.py weekly \
+      --as-of-date 2026-03-01 \
       --account-equity 50000
 
   # Monthly rebalancing (last Saturday of month):
-  python 00_run_pipeline.py monthly \\
-      --as-of-date 2026-02-28 \\
-      --account-equity 50000 \\
+  python scripts/00_trend_strategy_pipeline.py monthly \
+      --as-of-date 2026-02-28 \
+      --account-equity 50000 \
       --vix 18.5
 
   # Quarterly review (monthly rebalancing + full data quality audit):
-  python 00_run_pipeline.py quarterly \\
-      --as-of-date 2026-03-31 \\
-      --account-equity 50000 \\
+  python scripts/00_trend_strategy_pipeline.py quarterly \
+      --as-of-date 2026-03-31 \
+      --account-equity 50000 \
       --vix 16.8
 
   # Performance analytics only (fast review of returns, risk, attribution):
-  python 00_run_pipeline.py analytics \\
-      --month 2026-02 \\
-      --account-equity 50000 \\
+  python scripts/00_trend_strategy_pipeline.py analytics \
+      --month 2026-02 \
+      --account-equity 50000 \
       --benchmark SPY.US
 
   # Full backtest validation pipeline (long-running, hours/days):
-  python 00_run_pipeline.py backtest \\
-      --backtest-start 2019-01-01 \\
-      --backtest-end 2024-12-31 \\
+  python scripts/00_trend_strategy_pipeline.py backtest \
+      --backtest-start 2019-01-01 \
+      --backtest-end 2024-12-31 \
       --initial-equity 10000
 
   # Validate existing backtest results (fast, ~5 min):
-  python 00_run_pipeline.py validation
+  python scripts/00_trend_strategy_pipeline.py validation
 
   # Re-generate PDF report only:
-  python 00_run_pipeline.py report --month 2026-01
+  python scripts/00_trend_strategy_pipeline.py report --month 2026-01
 
   # Dry-run any mode (no files written):
-  python 00_run_pipeline.py monthly \\
+  python scripts/00_trend_strategy_pipeline.py monthly \
       --as-of-date 2026-01-31 --account-equity 50000 --dry-run
 
   # Run specific steps only:
-  python 00_run_pipeline.py custom \\
+  python scripts/00_trend_strategy_pipeline.py custom \
       --steps 4,5,6 --as-of-date 2026-01-31
 
   # Custom with mode inheritance (monthly behavior, custom steps):
-  python 00_run_pipeline.py custom --as-monthly \\
-      --steps 1,3,4,5,6,7,8,11,12 \\
+  python scripts/00_trend_strategy_pipeline.py custom --as-monthly \
+      --steps 1,3,4,5,6,7,8,11,12 \
       --as-of-date 2026-01-31 --account-equity 50000
 
 DEPENDENCIES
@@ -306,9 +303,9 @@ def _resolve_cache_path(cache_path: Optional[Path]) -> Optional[Path]:
     (project root).  Returns the first existing match, or None.
 
     Handles two common layouts:
-        Layout A: 00_run_pipeline.py at project root
+        Layout A: 00_trend_strategy_pipeline.py at project root
                   → data_cache/ is at SCRIPT_DIR / cache_path
-        Layout B: 00_run_pipeline.py inside scripts/
+        Layout B: 00_trend_strategy_pipeline.py inside scripts/
                   → data_cache/ is at SCRIPT_DIR.parent / cache_path
     """
     if cache_path is None:
@@ -530,8 +527,8 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
         pass
 
     # ── Universal: --dry-run ──────────────────────────────────────────────────
-    # Script 2 does not support --dry-run; Script 15 only writes HTML reports
-    if getattr(ns, "dry_run", False) and num not in (15):
+    # Script 15 only writes HTML reports
+    if getattr(ns, "dry_run", False) and num not in (15,):
         a += ["--dry-run"]
 
     return a
@@ -865,7 +862,7 @@ def run_pipeline(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="00_run_pipeline.py",
+        prog="00_trend_strategy_pipeline.py",
         description=textwrap.dedent("""\
             Master Pipeline Orchestrator — Architecture v3.2
             Runs all strategy scripts incrementally in the correct order.
@@ -875,41 +872,41 @@ def build_parser() -> argparse.ArgumentParser:
             EXAMPLES
             --------
             # One-time setup (full historical download):
-            python scripts/00_run_pipeline.py setup --force
+            python scripts/00_trend_strategy_pipeline.py setup --force
 
             # Daily monitoring (fast):
-            python scripts/00_run_pipeline.py daily --account-equity 50000 --vix 17.2
+            python scripts/00_trend_strategy_pipeline.py daily --account-equity 50000 --vix 17.2
 
             # Monthly rebalancing (no validation):
-            python scripts/00_run_pipeline.py monthly \\
+            python scripts/00_trend_strategy_pipeline.py monthly \\
                 --as-of-date 2026-01-31 --account-equity 50000 --vix 18.5
 
             # Quarterly rebalancing + data quality audit:
-            python scripts/00_run_pipeline.py quarterly \\
+            python scripts/00_trend_strategy_pipeline.py quarterly \\
                 --as-of-date 2026-03-31 --account-equity 50000 --vix 16.8
 
             # Re-generate PDF report only:
-            python scripts/00_run_pipeline.py report --month 2026-01
+            python scripts/00_trend_strategy_pipeline.py report --month 2026-01
 
             # Dry-run (no files written):
-            python scripts/00_run_pipeline.py monthly \\
+            python scripts/00_trend_strategy_pipeline.py monthly \\
                 --as-of-date 2026-01-31 --account-equity 50000 --dry-run
 
             # Custom step selection:
-            python scripts/00_run_pipeline.py custom --steps 4,5,6 --as-of-date 2026-01-31
+            python scripts/00_trend_strategy_pipeline.py custom --steps 4,5,6 --as-of-date 2026-01-31
 
             # Custom with monthly behavior (consolidate-only Script 03):
-            python scripts/00_run_pipeline.py custom --as-monthly \\
+            python scripts/00_trend_strategy_pipeline.py custom --as-monthly \\
                 --steps 1,3,4,5,6,7,8,11,12 \\
                 --as-of-date 2026-01-31 --account-equity 50000
 
             # Custom with quarterly behavior (full validation):
-            python scripts/00_run_pipeline.py custom --as-quarterly \\
+            python scripts/00_trend_strategy_pipeline.py custom --as-quarterly \\
                 --steps 3,4,5,6,7 \\
                 --as-of-date 2026-03-31 --account-equity 50000
 
             # Continue pipeline even after a failure:
-            python scripts/00_run_pipeline.py monthly \\
+            python scripts/00_trend_strategy_pipeline.py monthly \\
                 --as-of-date 2026-01-31 --account-equity 50000 --no-abort
         """),
     )

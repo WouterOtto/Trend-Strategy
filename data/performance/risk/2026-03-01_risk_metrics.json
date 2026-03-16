@@ -1,0 +1,135 @@
+{
+  "as_of_date": "2026-03-01",
+  "generated_at": "2026-03-16T08:55:46.347719",
+  "lookback_days": 252,
+  "account_equity_eur": 50000.0,
+  "position_count": 7,
+  "var_results": [
+    {
+      "confidence_pct": 95.0,
+      "horizon_days": 1,
+      "var_eur": 0.0,
+      "var_pct": 0.0,
+      "cvar_eur": 0.0,
+      "cvar_pct": 0.0,
+      "tail_obs": 0,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 95.0,
+      "horizon_days": 5,
+      "var_eur": 0.0,
+      "var_pct": 0.0,
+      "cvar_eur": 0.0,
+      "cvar_pct": 0.0,
+      "tail_obs": 0,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 95.0,
+      "horizon_days": 20,
+      "var_eur": 0.0,
+      "var_pct": 0.0,
+      "cvar_eur": 0.0,
+      "cvar_pct": 0.0,
+      "tail_obs": 0,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 99.0,
+      "horizon_days": 1,
+      "var_eur": 0.0,
+      "var_pct": 0.0,
+      "cvar_eur": 0.0,
+      "cvar_pct": 0.0,
+      "tail_obs": 0,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 99.0,
+      "horizon_days": 5,
+      "var_eur": 0.0,
+      "var_pct": 0.0,
+      "cvar_eur": 0.0,
+      "cvar_pct": 0.0,
+      "tail_obs": 0,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 99.0,
+      "horizon_days": 20,
+      "var_eur": 0.0,
+      "var_pct": 0.0,
+      "cvar_eur": 0.0,
+      "cvar_pct": 0.0,
+      "tail_obs": 0,
+      "is_alert": false
+    }
+  ],
+  "benchmark_metrics": {
+    "benchmark_symbol": "SPY.US",
+    "benchmark_name": "S&P 500 (SPY)",
+    "lookback_days": 252,
+    "portfolio_return_pct": 0.0,
+    "benchmark_return_pct": 0.0,
+    "active_return_pct": 0.0,
+    "beta": 0.0,
+    "alpha_ann_pct": 0.0,
+    "r_squared": 0.0,
+    "portfolio_vol_ann_pct": 0.0,
+    "benchmark_vol_ann_pct": 0.0,
+    "tracking_error_ann_pct": 0.0,
+    "information_ratio": 0.0,
+    "sharpe_ratio": 0.0,
+    "benchmark_sharpe": 0.0,
+    "shared_trading_days": 0
+  },
+  "concentration": {
+    "hhi": 0.276591,
+    "effective_n": 3.62,
+    "top1_weight_pct": 45.64,
+    "top3_weight_pct": 77.33,
+    "top5_weight_pct": 93.23,
+    "position_count": 7,
+    "regime": "High",
+    "is_alert": true
+  },
+  "correlation": {
+    "symbols": [],
+    "matrix": [],
+    "avg_pairwise_corr": 0.0,
+    "max_pairwise_corr": 0.0,
+    "high_corr_pairs": [],
+    "lookback_days": 63,
+    "is_alert": false
+  },
+  "factor_exposure": {
+    "size_score": 11.641,
+    "size_label": "Mega/Large-Cap",
+    "momentum_score_avg": 0.0,
+    "momentum_label": "Unknown",
+    "quality_score_avg": 5.1057,
+    "quality_label": "Average Quality",
+    "value_available": false,
+    "value_note": "P/E data not available; use Script 02 PE ratio when present",
+    "us_weight_pct": 18.86,
+    "eu_weight_pct": 70.87,
+    "crypto_weight_pct": 0.0,
+    "other_weight_pct": 10.27
+  },
+  "drawdown": {
+    "lookback_days": 252,
+    "max_drawdown_pct": 0.0,
+    "current_drawdown_pct": 0.0,
+    "avg_drawdown_pct": 0.0,
+    "longest_dd_days": 0,
+    "recovery_days": null,
+    "calmar_ratio": 0.0
+  },
+  "alerts": [
+    "CRITICAL: HHI 0.2766 indicates High concentration (effective N=3.6)",
+    "WARN: Top 3 positions represent 77.3% of portfolio"
+  ],
+  "risk_score": 2,
+  "risk_label": "Low"
+}
