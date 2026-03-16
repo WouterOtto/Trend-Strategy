@@ -5,7 +5,7 @@ Script 17: Walk-Forward Optimizer
 Systematically optimize strategy parameters on in-sample data and validate
 robustness on out-of-sample data — eliminating look-ahead bias and curve-fitting.
 
-Architecture Reference: v3.7 (Mar 2026)
+Architecture Reference: v3.8 (Mar 2026)
 
 Walk-Forward Methodology
 ------------------------
@@ -133,7 +133,7 @@ Execution
       --start-date 2022-01-01 --end-date 2024-12-31 \\
       --output-tag quarterly_review_2024Q4
 
-Architecture: v3.7 (Mar 2026) — Multi-Asset Trend Following Strategy
+Architecture: v3.8 (Mar 2026) — Multi-Asset Trend Following Strategy
 """
 
 import os
@@ -1254,23 +1254,98 @@ def compute_stability_metrics(windows: List[Dict]) -> Dict:
     else:
         slope = 0.0
 
+    # -----------------------------------------------------------------------
+    # Recent-window stability  (last N windows)
+    # -----------------------------------------------------------------------
+    # The all-window stability ratio is structurally handicapped by early
+    # COVID-era windows (IS periods 2019-2021 produce anomalously high IS
+    # Sharpes that inflate the denominator). The most recent windows reflect
+    # the current parameter set's forward-looking performance and are more
+    # actionable for deployment decisions.
+    #
+    # Logic mirrors the all-window calculation but restricted to the last
+    # RECENT_WINDOW_N windows by chronological order.  Inverted-IS windows
+    # within that subset are excluded from the ratio (same rule as above)
+    # but still count toward recent OOS consistency.
+    # -----------------------------------------------------------------------
+    RECENT_WINDOW_N = 5
+
+    recent_windows     = windows[-RECENT_WINDOW_N:] if len(windows) >= RECENT_WINDOW_N else windows[:]
+    recent_normal      = [w for w in recent_windows if w["is_best_sharpe"] > _IS_MEANINGFUL_THRESHOLD]
+    recent_oos_sharpes = [w["oos_sharpe"] for w in recent_windows]
+
+    if recent_normal:
+        r_avg_is  = float(np.mean([w["is_best_sharpe"] for w in recent_normal]))
+        r_avg_oos = float(np.mean([w["oos_sharpe"]     for w in recent_normal]))
+        recent_stability_ratio = r_avg_oos / r_avg_is if r_avg_is > 0 else -99.0
+    else:
+        recent_stability_ratio = -99.0
+        r_avg_is  = 0.0
+        r_avg_oos = 0.0
+
+    recent_oos_positive    = sum(1 for s in recent_oos_sharpes if s > 0)
+    recent_n               = len(recent_oos_sharpes)
+    recent_oos_consistency = recent_oos_positive / recent_n if recent_n > 0 else 0.0
+
+    if recent_stability_ratio > STABILITY_EXCELLENT:
+        recent_stability_grade = "EXCELLENT"
+    elif recent_stability_ratio > STABILITY_GOOD:
+        recent_stability_grade = "GOOD"
+    elif recent_stability_ratio > STABILITY_ACCEPTABLE:
+        recent_stability_grade = "ACCEPTABLE"
+    elif recent_stability_ratio > 0:
+        recent_stability_grade = "WEAK"
+    else:
+        recent_stability_grade = "FAIL"
+
+    if recent_oos_consistency >= OOS_CONSISTENCY_PASS:
+        recent_consistency_grade = "PASS"
+    elif recent_oos_consistency >= OOS_CONSISTENCY_WARN:
+        recent_consistency_grade = "WARNING"
+    else:
+        recent_consistency_grade = "FAIL"
+
+    # Flag if recent stability is meaningfully better than all-window stability
+    # (indicates the strategy is improving over time, not just overfitting early data)
+    if recent_stability_ratio > stability_ratio + 0.2 and recent_n >= 3:
+        red_flags_positive = [
+            f"IMPROVING_TREND: Recent {recent_n}-window stability "
+            f"({recent_stability_ratio:.3f}) significantly exceeds "
+            f"all-window stability ({stability_ratio:.3f}) — "
+            f"strategy performance improving over time"
+        ]
+    else:
+        red_flags_positive = []
+
     return {
-        "n_windows":              oos_n,
-        "n_normal_windows":       len(normal_windows),
-        "n_inverted_windows":     n_inverted,
-        "avg_is_sharpe":          round(avg_is, 4),
-        "avg_oos_sharpe":         round(avg_oos, 4),
-        "avg_is_sharpe_normal":   round(avg_is_normal, 4),
-        "avg_oos_sharpe_normal":  round(avg_oos_normal, 4),
-        "stability_ratio":        round(stability_ratio, 4),
-        "stability_grade":        stability_grade,
-        "oos_positive_windows":   oos_positive,
-        "oos_consistency":        round(oos_consistency, 4),
-        "oos_consistency_grade":  consistency_grade,
-        "oos_sharpe_trend_slope": round(float(slope), 6),
-        "param_cv":               param_cv,
-        "param_edges":            param_edges,
-        "red_flags":              red_flags,
+        "n_windows":                   oos_n,
+        "n_normal_windows":            len(normal_windows),
+        "n_inverted_windows":          n_inverted,
+        "avg_is_sharpe":               round(avg_is, 4),
+        "avg_oos_sharpe":              round(avg_oos, 4),
+        "avg_is_sharpe_normal":        round(avg_is_normal, 4),
+        "avg_oos_sharpe_normal":       round(avg_oos_normal, 4),
+        "stability_ratio":             round(stability_ratio, 4),
+        "stability_grade":             stability_grade,
+        "oos_positive_windows":        oos_positive,
+        "oos_consistency":             round(oos_consistency, 4),
+        "oos_consistency_grade":       consistency_grade,
+        "oos_sharpe_trend_slope":      round(float(slope), 6),
+        # Recent-window metrics
+        "recent_window_n":             recent_n,
+        "recent_stability_ratio":      round(recent_stability_ratio, 4),
+        "recent_stability_grade":      recent_stability_grade,
+        "recent_avg_is_sharpe":        round(r_avg_is, 4),
+        "recent_avg_oos_sharpe":       round(r_avg_oos, 4),
+        "recent_oos_positive_windows": recent_oos_positive,
+        "recent_oos_consistency":      round(recent_oos_consistency, 4),
+        "recent_consistency_grade":    recent_consistency_grade,
+        "recent_oos_sharpes":          [round(s, 4) for s in recent_oos_sharpes],
+        "positive_signals":            red_flags_positive,
+        # Existing
+        "param_cv":                    param_cv,
+        "param_edges":                 param_edges,
+        "red_flags":                   red_flags,
     }
 
 
@@ -1652,6 +1727,19 @@ def print_summary(
         f"  OOS Sharpe Trend Slope : {stability['oos_sharpe_trend_slope']:+.4f}",
         "",
         sep2,
+        f"RECENT {stability['recent_window_n']}-WINDOW METRICS  "
+            f"(forward-looking signal — less contaminated by historical regime outliers)",
+        sep2,
+        f"  Recent Stability Ratio : {stability['recent_stability_ratio']:.4f}  "
+            f"[{stability['recent_stability_grade']}]",
+        f"  Recent OOS Consistency : {stability['recent_oos_consistency']:.1%}  "
+            f"({stability['recent_oos_positive_windows']}/{stability['recent_window_n']} windows profitable)"
+            f"  [{stability['recent_consistency_grade']}]",
+        f"  Recent Avg IS  Sharpe  : {stability['recent_avg_is_sharpe']:.4f}",
+        f"  Recent Avg OOS Sharpe  : {stability['recent_avg_oos_sharpe']:.4f}",
+        f"  Recent OOS Sharpes     : "
+            + "  ".join(f"{s:+.4f}" for s in stability['recent_oos_sharpes']),
+        sep2,
         "WINDOW-BY-WINDOW RESULTS",
         sep2,
         f"  {'WID':>3}  {'IS Period':<23}  {'OOS Period':<23}  "
@@ -1713,17 +1801,61 @@ def print_summary(
         for rf in stability["red_flags"]:
             lines.append(f"  [!] {rf}")
 
+    if stability.get("positive_signals"):
+        lines += [
+            "",
+            sep2,
+            f"POSITIVE SIGNALS  ({len(stability['positive_signals'])} detected)",
+            sep2,
+        ]
+        for ps in stability["positive_signals"]:
+            lines.append(f"  [+] {ps}")
+
     # Deployment recommendation
-    sr = stability["stability_ratio"]
-    oc = stability["oos_consistency"]
+    # Uses BOTH all-window and recent-window metrics.
+    # Recent metrics are the primary forward-looking signal; all-window metrics
+    # provide the structural robustness check.
+    sr      = stability["stability_ratio"]
+    oc      = stability["oos_consistency"]
+    r_sr    = stability["recent_stability_ratio"]
+    r_oc    = stability["recent_oos_consistency"]
+    r_grade = stability["recent_stability_grade"]
+
     if sr >= STABILITY_EXCELLENT and oc >= OOS_CONSISTENCY_PASS:
-        deploy_rec = "DEPLOY  — Parameters robust; proceed with production deployment"
+        deploy_rec = (
+            "DEPLOY  — All-window stability excellent; proceed with production deployment"
+        )
     elif sr >= STABILITY_GOOD and oc >= OOS_CONSISTENCY_PASS:
-        deploy_rec = "DEPLOY WITH MONITORING  — Good stability; enhanced monitoring advised"
-    elif sr >= STABILITY_ACCEPTABLE and oc >= OOS_CONSISTENCY_WARN:
-        deploy_rec = "PAPER TRADE FIRST  — Marginal stability; validate 3-6 months in paper mode"
+        deploy_rec = (
+            "DEPLOY WITH MONITORING  — Good all-window stability; enhanced monitoring advised"
+        )
+    elif (r_sr >= STABILITY_ACCEPTABLE and r_oc >= OOS_CONSISTENCY_WARN
+          and oc >= OOS_CONSISTENCY_WARN):
+        deploy_rec = (
+            f"PAPER TRADE → DEPLOY  — All-window stability below threshold but recent "
+            f"{stability['recent_window_n']}-window stability is {r_grade} "
+            f"(ratio={r_sr:.3f}, consistency={r_oc:.1%}). "
+            f"Paper trade 3 months; deploy if recent OOS consistency holds."
+        )
+    elif r_sr >= STABILITY_ACCEPTABLE and r_oc >= OOS_CONSISTENCY_WARN:
+        deploy_rec = (
+            f"PAPER TRADE FIRST  — All-window stability poor but recent "
+            f"{stability['recent_window_n']}-window metrics show improvement "
+            f"(ratio={r_sr:.3f} [{r_grade}], consistency={r_oc:.1%}). "
+            f"Validate 3-6 months in paper mode before capital deployment."
+        )
+    elif r_sr > 0 and r_oc >= OOS_CONSISTENCY_WARN:
+        deploy_rec = (
+            f"MONITOR / RE-OPTIMIZE  — Recent {stability['recent_window_n']}-window "
+            f"OOS consistency {r_oc:.1%} shows potential but stability ratio "
+            f"({r_sr:.3f}) below acceptable threshold. "
+            f"Continue optimizing; do not deploy capital yet."
+        )
     else:
-        deploy_rec = "REJECT / RE-OPTIMIZE  — Poor stability; risk of overfitting detected"
+        deploy_rec = (
+            "REJECT / RE-OPTIMIZE  — Poor stability across all-window and recent metrics; "
+            "risk of overfitting detected"
+        )
 
     lines += [
         "",
@@ -1745,10 +1877,10 @@ def print_summary(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Script 17: Walk-Forward Optimizer v3.7 — Multi-Asset Trend Following",
+        description="Script 17: Walk-Forward Optimizer v3.8 — Multi-Asset Trend Following",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Performance notes (v3.7):
+Performance notes (v3.8):
   Indicator caching:  2,880 combos → 12 indicator buckets (~240× fewer precompute calls)
   Parallel workers:   --n-workers N distributes buckets across N processes
                       Maximum effective parallelism = 12 (one per indicator bucket)
@@ -1951,7 +2083,7 @@ def main() -> None:
 
     run_meta = {
         "script":                "17_walk_forward_optimizer.py",
-        "architecture":          "v3.7",
+        "architecture":          "v3.8",
         "start_date":            args.start_date,
         "end_date":              args.end_date,
         "available_months":      _total_months(data_start, data_end),

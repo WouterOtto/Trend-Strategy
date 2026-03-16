@@ -124,41 +124,34 @@ LOG_DIR          = PROJECT_ROOT / "logs"
 
 DEFAULTS = dict(
     # Trend qualification
-    sma_fast           = 50,
-    sma_slow           = 200,
-    adx_threshold      = 20,     # minimum ADX to qualify
-    adx_weak           = 15,     # ADX below this for 3 days => exit (weakness)
-    adx_weakness_days  = 3,      # consecutive days below adx_weak
+    sma_fast           = 100,
+    sma_slow           = 250,
+    adx_threshold      = 15,
+    adx_weak           = 10,    # must be < adx_threshold; was 15 (logical conflict)
+    adx_weakness_days  = 3,
     # Momentum
-    momentum_period    = 200,    # SMA period for momentum score
+    momentum_period    = 200,
     # Stops
-    init_stop_mult     = 3.0,    # initial stop = entry - mult x ATR
-    trail_stop_mult    = 4.0,    # trailing stop = close - mult x ATR
-    # FIX-4: Lowered trail_activation from 0.15 → 0.08.
-    # The trailing stop now engages at +8% profit instead of +15%, protecting gains
-    # earlier and increasing the average captured win before any exit fires.
-    trail_activation   = 0.08,   # trailing activates at +8% profit
+    init_stop_mult     = 2.5,   # was 3.0 — WFO converged CV=0.000
+    trail_stop_mult    = 3.5,   # was 4.0 — WFO mean=3.462
+    trail_activation   = 0.08,
     # Sizing
-    max_positions      = 20,
-    risk_per_trade     = 0.02,   # 2% of equity per position
-    pos_floor_pct      = 0.005,  # 0.5% minimum
-    pos_ceil_pct       = 0.08,   # 8.0% maximum
+    max_positions      = 40,    # was 20 — WFO mean=38
+    risk_per_trade     = 0.02,
+    pos_floor_pct      = 0.005,
+    pos_ceil_pct       = 0.08,
     # Execution
-    limit_slip         = 0.005,  # limit order buffer: close x (1 + 0.005)
-    limit_cancel_days  = 2,      # cancel unfilled limit after N trading days
-    slippage_stock     = 0.0005, # 0.05% for stocks/ETFs
-    slippage_crypto    = 0.001,  # 0.10% for crypto
-    cost_bps           = 10,     # transaction cost basis points per side
+    limit_slip         = 0.005,
+    limit_cancel_days  = 2,
+    slippage_stock     = 0.0005,
+    slippage_crypto    = 0.001,
+    cost_bps           = 10,
     # Capital
     initial_equity     = 50_000.0,
-    # Circuit breakers (honoured during backtest for realism)
-    # FIX-1: Raised drawdown threshold from -0.15 to -0.25 (only halt in severe regimes),
-    #         lowered recovery bar from 8% to 5%, shortened minimum halt from 60 to 30 days.
-    #         Previous -0.15 threshold triggered on the 2020 COVID drawdown and permanently
-    #         halted entries for the remaining 4 years of the 2019-2024 test window.
-    cb_drawdown        = -0.25,  # halt entries if drawdown > 25% (severe regime only)
-    cb_recovery_pct    = 0.05,   # trough-recovery % to trigger CB1 reset
-    cb_min_halt_days   = 30,     # minimum halt duration before trough-recovery reset
+    # Circuit breakers
+    cb_drawdown        = -0.25,
+    cb_recovery_pct    = 0.05,
+    cb_min_halt_days   = 30,
     cb_vix_enter       = 40,
     cb_vix_resume      = 30,
     cb_vix_resume_days = 3,
