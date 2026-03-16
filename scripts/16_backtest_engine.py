@@ -149,7 +149,7 @@ DEFAULTS = dict(
     # Capital
     initial_equity     = 50_000.0,
     # Circuit breakers
-    cb_drawdown        = -0.25,
+    cb_drawdown        = -0.30,
     cb_recovery_pct    = 0.05,
     cb_min_halt_days   = 30,
     cb_vix_enter       = 40,

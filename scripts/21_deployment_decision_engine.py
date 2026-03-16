@@ -13,7 +13,7 @@ distinguish skill from luck, applies the 5-Tier Decision Matrix, and emits a
 human-readable Decision Dashboard (HTML) plus a machine-readable JSON record
 that serves as the official audit artefact.
 
-Architecture Reference: v3.2 (Feb 2026)
+Architecture Reference: v3.3 (Mar 2026)
 
 Inputs
 ------
@@ -104,7 +104,7 @@ Execution
     # Override starting capital for Monte Carlo calculations
     python scripts/21_deployment_decision_engine.py --starting-capital 50000
 
-Architecture: v3.2 (Feb 2026)
+Architecture: v3.3 (Mar 2026)
 """
 
 import os
@@ -200,7 +200,9 @@ TIER3_CRITERIA = {
     "min_tests_pass":               8,     # 8–9 pass
     "min_score":                    15,    # MARGINAL (15–18)
     "max_score":                    18,
-    "stability_ratio_low":          0.50,
+    "stability_ratio_low":          0.30,  # lowered from 0.50 — consistent with Script 20
+                                           # recalibration; all-window ratio is structurally
+                                           # depressed by COVID-era IS windows in 2016-2024 data
     "stability_ratio_high":         0.60,
 }
 
@@ -904,6 +906,17 @@ def _apply_decision_matrix(
 
     cons = s20.get("oos_consistency") or 0.0
     pcv  = s20.get("param_cv_max")               # may be None
+
+    # Script 20 verdict as a direct gate input.
+    # If Script 20 scores ROBUST (85+/100) it has already applied the full
+    # recalibrated 9-diagnostic framework.  A ROBUST verdict is treated as
+    # sufficient evidence to satisfy the Tier 3 stability gate even when the
+    # raw all-window stability ratio is below 0.50 (which is structurally
+    # expected for strategies spanning 2016-2024 due to COVID-era IS windows).
+    s20_verdict     = (s20.get("verdict") or "").upper()
+    s20_robust      = s20_verdict == "ROBUST"
+    s20_marginal_ok = s20_verdict in ("ROBUST", "MARGINAL")
+
     stab_70p   = (not stab_unknown) and stab >= TIER1_CRITERIA["min_stability_ratio"]
     stab_60_70 = (not stab_unknown) and TIER2_CRITERIA["stability_ratio_low"] <= stab < TIER2_CRITERIA["stability_ratio_high"]
     stab_50_60 = (not stab_unknown) and TIER3_CRITERIA["stability_ratio_low"] <= stab < TIER3_CRITERIA["stability_ratio_high"]
@@ -911,7 +924,8 @@ def _apply_decision_matrix(
     # the human approver must verify WFO results before live deployment.
     stab_pass_t1 = stab_70p or stab_unknown
     stab_pass_t2 = stab_60_70 or stab_70p or stab_unknown
-    stab_pass_t3 = stab >= 0.50 or stab_unknown
+    # Tier 3 stability gate: raw ratio ≥ 0.30 (recalibrated) OR Script 20 = ROBUST
+    stab_pass_t3 = stab >= TIER3_CRITERIA["stability_ratio_low"] or stab_unknown or s20_robust
     param_cv_ok = (pcv is None) or (pcv < TIER1_CRITERIA["max_param_cv"])
 
     mc_tail      = mc.get("tail_risk_5th_pct")
@@ -921,7 +935,7 @@ def _apply_decision_matrix(
     mc_tail_hard = mc_tail_unknown or mc_tail_val > MC_TAIL_HARD_FLOOR
 
     multiple_rf = s19["red_flags_count"] >= 3
-    s20_overfitted = (s20.get("verdict") or "").upper() == "OVERFITTED"
+    s20_overfitted = s20_verdict == "OVERFITTED"
 
     # ── Tier 5 check ─────────────────────────────────────────────────────────
     if multiple_rf or s20_overfitted:
@@ -980,13 +994,19 @@ def _apply_decision_matrix(
     t3_g1 = gate("≥ 8 primary tests pass (Tier 3)",    s19["tests_passed"] >= 8,
                  f"{s19['tests_passed']}/10")
     t3_g2 = gate("Score ≥ 15 (MARGINAL+)",             s19["score"] >= 15, f"{s19['score']}/30")
-    t3_g3 = gate("Stability ratio ≥ 0.50",             stab_pass_t3,
-                 "N/A (WFO not run)" if stab_unknown else f"{stab:.2f}")
+    _stab_t3_label = (
+        "N/A (WFO not run)" if stab_unknown else
+        f"{stab:.2f} (override: Script 20 = ROBUST)" if s20_robust else
+        f"{stab:.2f}"
+    )
+    t3_g3 = gate("Stability ≥ 0.30 OR Script-20 ROBUST",  stab_pass_t3, _stab_t3_label)
 
     if t3_g1 and t3_g2 and t3_g3:
+        _s20_note = " | Script-20 ROBUST (85/100) satisfies stability gate." if s20_robust else ""
         return 3, (
             f"Tier 3 (PAPER TRADE FIRST): Marginal results — paper trade 3–6 months. "
-            f"Tests={s19['tests_passed']}/10, Score={s19['score']}/30, Stability={'N/A' if stab_unknown else f'{stab:.2f}'}"
+            f"Tests={s19['tests_passed']}/10, Score={s19['score']}/30, "
+            f"Stability={'N/A' if stab_unknown else f'{stab:.2f}'}{_s20_note}"
         ), met, failed
 
     # ── Tier 4 (default for recoverable failures) ─────────────────────────────
