@@ -233,30 +233,30 @@ except ModuleNotFoundError:
 # ===========================================================================
 
 PARAM_GRID = {
-    "sma_fast":          [30, 50, 100],           # CV=0.374 unstable — keep full range
     "sma_slow":          [200, 250, 300],          # CV=0.092 excellent — centred on mean=264
-    "adx_threshold":     [10, 15, 20, 25],         # expanded down: hit 15-min in 5/7 windows
-    "init_stop_mult":    [1.5, 2.0, 2.5, 3.0, 3.5], # expanded down: hit 2.0-min in 7/7 windows
-    "trail_stop_mult":   [3.0, 3.5, 4.0, 4.5, 5.0], # expanded up: hit 4.0-max in 7/7 windows
-    "max_positions":     [15, 20, 25, 30],         # expanded up: hit 25-max in 7/7 windows
+    # "adx_threshold":     [10, 15, 20, 25],         # expanded down: hit 15-min in 5/7 windows
+    "init_stop_mult":    [2.0, 2.5, 3.0, 3.5], # expanded down: hit 2.0-min in 7/7 windows
+    "trail_stop_mult":   [3.0, 3.5, 4.0, 4.5], # expanded up: hit 4.0-max in 7/7 windows
+    "max_positions":     [30, 35, 40, 45],         # expanded up: hit 25-max in 7/7 windows
 }
-# Grid stats: 3×3×4×5×5×4 = 3,600 combinations | 3×3 = 9 indicator buckets (400 combos/bucket)
-# Optimal --n-workers 9 (all buckets complete in one parallel round)
+# Grid stats: 3×4x4x4 = 192 combinations | 1×3 = 3 indicator buckets (64 combos/bucket)
+# Optimal --n-workers 3 (all buckets complete in one parallel round)
 
 PARAM_GRID_FAST = {
-    "sma_fast":          [50, 100],                # representative subset of full range
+    #"sma_fast":          [50, 100],                # representative subset of full range
     "sma_slow":          [200, 250, 300],           # matches full grid sma_slow
-    "adx_threshold":     [10, 20],                  # expanded: include new lower bound
-    "init_stop_mult":    [1.5, 2.0, 2.5],           # expanded: include new lower bound
+    #"adx_threshold":     [10, 20],                  # expanded: include new lower bound
+    #"init_stop_mult":    [1.5, 2.0, 2.5],           # expanded: include new lower bound
     "trail_stop_mult":   [3.5, 4.0, 4.5],           # centred on current optimum range
     "max_positions":     [20, 25],                  # centred on current optimum range
 }
-# Fast grid stats: 2×3×2×3×3×2 = 216 combinations | 2×3 = 6 indicator buckets (36 combos/bucket)
-# Fast grid stats: 2×3×2×3×3×2 = 216 combinations | 2×3 = 6 indicator buckets (36 combos/bucket)
+# Fast grid stats: 1×3×3×2 = 18 combinations | 1×3 = 3 indicator buckets (6 combos/bucket)
 
 # Fixed params not in the optimization grid
 FIXED_PARAMS = {
-    "adx_weak":          15,
+    "sma_fast":          100,           # CV=0.374 unstable — keep full range"adx_weak":          15,
+    "adx_threshold":     15,
+    "init_stop_mult":    2.5,
     "trail_activation":  0.15,
     "risk_per_trade":    0.02,
     "cost_bps":          10,
