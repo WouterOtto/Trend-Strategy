@@ -148,6 +148,22 @@ ASSET_CLASS_COLORS = {
     "Unknown":        "#78909C",
 }
 
+# Ordered colour cycle for per-symbol allocation pie
+SYMBOL_COLOR_CYCLE = [
+    "#4FC3F7",  # sky blue
+    "#69F0AE",  # green
+    "#FFD700",  # gold
+    "#FF9800",  # orange
+    "#CE93D8",  # purple
+    "#FF5252",  # red
+    "#B0BEC5",  # silver
+    "#80DEEA",  # cyan
+    "#F48FB1",  # pink
+    "#A5D6A7",  # light green
+    "#FFCC02",  # amber
+    "#90CAF9",  # light blue
+]
+
 # ============================================================================
 # LOGGING
 # ============================================================================
@@ -172,24 +188,34 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PortfolioMetrics:
     """Aggregated performance metrics shown in the summary bar."""
-    total_return_pct:      Optional[float] = None
-    annualised_return_pct: Optional[float] = None
-    sharpe_ratio:          Optional[float] = None
-    max_drawdown_pct:      Optional[float] = None
-    win_rate_pct:          Optional[float] = None
-    profit_factor:         Optional[float] = None
-    num_positions:         int = 0
-    portfolio_value_eur:   Optional[float] = None
-    total_trades:          int = 0
-    first_trade_date:      Optional[str] = None
-    last_update:           str = field(default_factory=lambda: datetime.now().isoformat())
+    total_return_pct:       Optional[float] = None
+    annualised_return_pct:  Optional[float] = None
+    sharpe_ratio:           Optional[float] = None
+    max_drawdown_pct:       Optional[float] = None
+    win_rate_pct:           Optional[float] = None
+    profit_factor:          Optional[float] = None
+    num_positions:          int = 0
+    portfolio_value_eur:    Optional[float] = None
+    total_trades:           int = 0
+    first_trade_date:       Optional[str] = None
+    last_update:            str = field(default_factory=lambda: datetime.now().isoformat())
+
+    # Computed from NAV series (no Script 23 required)
+    ann_volatility_pct:     Optional[float] = None   # annualised daily σ
+    calmar_ratio:           Optional[float] = None   # CAGR / |max_drawdown|
+    monthly_win_rate_pct:   Optional[float] = None   # % of months with positive return
+    avg_win_monthly_pct:    Optional[float] = None
+    avg_loss_monthly_pct:   Optional[float] = None
+    monthly_profit_factor:  Optional[float] = None
+    cost_basis_eur:         Optional[float] = None   # total invested capital
+    asset_return_pct:       Optional[float] = None   # P&L vs cost basis
 
     # Risk metrics (populated from Script 23 if available)
-    var_95_1d_eur:         Optional[float] = None
-    cvar_95_1d_eur:        Optional[float] = None
-    beta:                  Optional[float] = None
-    information_ratio:     Optional[float] = None
-    hhi:                   Optional[float] = None
+    var_95_1d_eur:          Optional[float] = None
+    cvar_95_1d_eur:         Optional[float] = None
+    beta:                   Optional[float] = None
+    information_ratio:      Optional[float] = None
+    hhi:                    Optional[float] = None
 
 
 @dataclass
@@ -345,7 +371,7 @@ def reconstruct_equity_curve(
     start_date:    Optional[date],
     load_prices:   bool,
     account_equity: Optional[float],
-) -> Tuple[Optional[pd.Series], Optional[pd.Series]]:
+) -> Tuple[Optional[pd.Series], Optional[pd.Series], Optional[pd.Series], List[Tuple[str, float]]]:
     """
     Reconstruct a daily NAV series from the trade ledger and open positions.
 
@@ -354,14 +380,16 @@ def reconstruct_equity_curve(
         2.  At each date, mark open positions to current price (if parquet
             available); otherwise carry forward at last known value.
         3.  NAV[t] = Cash[t] + Σ(shares_i × price_i[t])
+        4.  AssetNAV[t] = NAV[t] - Cash[t]  (invested-capital value only)
 
     Returns:
-        (nav_series, daily_returns_series) — both indexed by date.
-        Returns (None, None) if insufficient data.
+        (nav_series, daily_returns, asset_nav_series, buy_markers)
+        buy_markers: list of (date_str, asset_value_after_buy) for chart annotations
+        Returns (None, None, None, []) if insufficient data.
     """
     if not trades:
         logger.warning("No trade records — equity curve unavailable.")
-        return None, None
+        return None, None, None, []
 
     # ── Infer initial cash ────────────────────────────────────────────────────
     # Use first BUY to anchor starting portfolio value.
@@ -383,7 +411,7 @@ def reconstruct_equity_curve(
         freq="B",  # business days
     )
     if len(date_range) < 2:
-        return None, None
+        return None, None, None, []
 
     # ── Trade events ──────────────────────────────────────────────────────────
     # cash_flows[date] = net cash delta (negative = BUY, positive = SELL)
@@ -417,9 +445,11 @@ def reconstruct_equity_curve(
                 price_cache[sym] = series
 
     # ── Simulate NAV day by day ───────────────────────────────────────────────
-    cash       = 0.0
-    holdings   : Dict[str, Tuple[int, float]] = {}  # {symbol: (shares, avg_cost)}
-    nav_values : Dict[date, float]            = {}
+    cash        = 0.0
+    holdings    : Dict[str, Tuple[int, float]] = {}  # {symbol: (shares, avg_cost)}
+    nav_values  : Dict[date, float]            = {}
+    cash_values : Dict[date, float]            = {}  # running cash per day
+    buy_dates   : set                          = set(buy_events.keys())
 
     # Seed cash from first session of buys
     first_buy_date = sorted_trades[0]["execution_date"]
@@ -490,11 +520,12 @@ def reconstruct_equity_curve(
         # Guard against nonsensical negatives early in simulation
         if nav < 0 and d_obj == first_date:
             nav = abs(nav)
-        nav_values[d_obj] = nav
+        nav_values[d_obj]  = nav
+        cash_values[d_obj] = cash
 
     if len(nav_values) < 5:
         logger.warning("Equity curve has fewer than 5 data points — skipping.")
-        return None, None
+        return None, None, None, []
 
     nav_series = pd.Series(nav_values).sort_index()
     # Ensure DatetimeIndex (required for resample, rolling, and Plotly x-axis)
@@ -502,11 +533,30 @@ def reconstruct_equity_curve(
     base = nav_series.iloc[0]
     if base <= 0:
         logger.warning("First NAV ≤ 0 — cannot normalise equity curve.")
-        return None, None
+        return None, None, None, []
+
+    # Asset-only NAV: strip out the idle cash balance
+    cash_series = pd.Series(cash_values).sort_index()
+    cash_series.index = pd.to_datetime(cash_series.index)
+    asset_nav = (nav_series - cash_series).clip(lower=0)
+
+    # Buy-event markers for the equity chart: (date_str, asset_value_after_buy)
+    buy_markers: List[Tuple[str, float]] = []
+    for d_str in sorted(buy_dates):
+        try:
+            ts_key = pd.Timestamp(d_str)
+            if ts_key in asset_nav.index:
+                buy_markers.append((d_str, float(asset_nav.loc[ts_key])))
+            else:
+                idx_asof = asset_nav.index.asof(ts_key)
+                if pd.notna(idx_asof):
+                    buy_markers.append((d_str, float(asset_nav.loc[idx_asof])))
+        except Exception:
+            pass
 
     # Keep absolute EUR values (not indexed) for display
     daily_returns = nav_series.pct_change().dropna()
-    return nav_series, daily_returns
+    return nav_series, daily_returns, asset_nav, buy_markers
 
 
 # ============================================================================
@@ -520,6 +570,7 @@ def compute_metrics(
     portfolio:      Dict,
     risk_data:      Optional[Dict],
     account_equity: Optional[float],
+    position_rows:  Optional[List] = None,
 ) -> PortfolioMetrics:
     """Compute all summary metrics from available inputs."""
     m = PortfolioMetrics()
@@ -547,7 +598,8 @@ def compute_metrics(
             n_days = (nav.index[-1] - nav.index[0]).days
             if n_days > 0:
                 years = n_days / 365.25
-                m.annualised_return_pct = ((last_nav / first_nav) ** (1 / years) - 1) * 100
+                ann_ret = ((last_nav / first_nav) ** (1 / years) - 1)
+                m.annualised_return_pct = ann_ret * 100
 
         # Max drawdown
         rolling_max = nav.cummax()
@@ -557,9 +609,28 @@ def compute_metrics(
     if daily_returns is not None and len(daily_returns) >= MIN_PERIODS_SHARPE:
         excess     = daily_returns - RISK_FREE_RATE_ANNUAL / TRADING_DAYS_PER_YEAR
         mean_daily = excess.mean()
-        std_daily  = excess.std()
+        std_daily  = daily_returns.std()
         if std_daily > 0:
-            m.sharpe_ratio = float(mean_daily / std_daily * math.sqrt(TRADING_DAYS_PER_YEAR))
+            m.sharpe_ratio     = float(mean_daily / std_daily * math.sqrt(TRADING_DAYS_PER_YEAR))
+            m.ann_volatility_pct = float(std_daily * math.sqrt(TRADING_DAYS_PER_YEAR) * 100)
+
+        # Calmar ratio: CAGR / |max_drawdown|
+        if m.annualised_return_pct is not None and m.max_drawdown_pct and m.max_drawdown_pct < 0:
+            m.calmar_ratio = m.annualised_return_pct / abs(m.max_drawdown_pct)
+
+        # Monthly statistics from daily returns
+        try:
+            monthly = daily_returns.resample("ME").agg(lambda r: (1 + r).prod() - 1) * 100
+            if len(monthly) >= 3:
+                wins   = monthly[monthly > 0]
+                losses = monthly[monthly < 0]
+                m.monthly_win_rate_pct   = len(wins) / len(monthly) * 100
+                m.avg_win_monthly_pct    = float(wins.mean())   if len(wins)   > 0 else None
+                m.avg_loss_monthly_pct   = float(losses.mean()) if len(losses) > 0 else None
+                if losses.abs().sum() > 0:
+                    m.monthly_profit_factor = float(wins.sum() / losses.abs().sum())
+        except Exception:
+            pass
 
     # Win rate and profit factor from closed trades (SELL records)
     sell_trades = [t for t in trades if t.get("action") == "SELL"]
@@ -572,6 +643,14 @@ def compute_metrics(
         gross_loss   = abs(sum(losers)) if losers else 0
         if gross_loss > 0:
             m.profit_factor = gross_profit / gross_loss
+
+    # Cost basis and asset return from current positions
+    if position_rows:
+        cost_basis  = sum(r.entry_price * r.shares for r in position_rows)
+        curr_value  = sum(r.current_value_eur for r in position_rows)
+        if cost_basis > 0:
+            m.cost_basis_eur    = cost_basis
+            m.asset_return_pct  = (curr_value - cost_basis) / cost_basis * 100
 
     # Populate risk metrics from Script 23 output
     if risk_data:
@@ -683,45 +762,90 @@ def _apply_dark_theme(fig: go.Figure, title: str) -> go.Figure:
 
 
 def build_equity_curve_fig(
-    nav:       Optional[pd.Series],
-    start_date: Optional[date],
+    asset_nav:   Optional[pd.Series],
+    buy_markers: List[Tuple[str, float]],
+    start_date:  Optional[date],
 ) -> go.Figure:
-    """Panel 1: Equity curve (absolute EUR NAV)."""
+    """
+    Panel 1: Asset-only equity curve (invested capital value, cash excluded).
+
+    The curve shows only the mark-to-market value of held positions.
+    Buy events are annotated with gold triangle markers and dashed vertical lines,
+    so each deployment of new capital shows as a visible step-jump.
+
+    Fill shading:
+        - Green region: asset value above initial investment at that point
+        - Red region: asset value below initial investment
+    Both fills use the first-bar value as the baseline, clamping instead of nulls
+    so shading is continuous with no gaps.
+    """
     fig = go.Figure()
 
-    if nav is not None and len(nav) >= 2:
+    if asset_nav is not None and len(asset_nav) >= 2:
         if start_date:
-            nav = nav[nav.index >= pd.Timestamp(start_date)]
+            asset_nav = asset_nav[asset_nav.index >= pd.Timestamp(start_date)]
 
-        # Shade profit/loss regions vs starting value
-        start_val = nav.iloc[0]
-        above     = nav.copy()
-        below     = nav.copy()
-        above[nav < start_val]  = start_val
-        below[nav >= start_val] = start_val
+        start_val = float(asset_nav.iloc[0])
+        x_vals    = asset_nav.index
+        y_vals    = asset_nav.values
 
+        # Clamp to baseline so fills are continuous (no null gaps)
+        above_y = np.where(y_vals >= start_val, y_vals, start_val)
+        below_y = np.where(y_vals <  start_val, y_vals, start_val)
+
+        # Render below (red) first so green sits on top where ranges overlap
         fig.add_trace(go.Scatter(
-            x=nav.index, y=above.values,
-            fill="tozeroy", fillcolor="rgba(105,240,174,0.08)",
-            line=dict(width=0), showlegend=False, name="Above Start",
+            x=x_vals, y=below_y,
+            fill="tozeroy", fillcolor="rgba(255,82,82,0.12)",
+            line=dict(width=0), showlegend=False, hoverinfo="skip",
+            name="Below baseline",
         ))
         fig.add_trace(go.Scatter(
-            x=nav.index, y=below.values,
-            fill="tozeroy", fillcolor="rgba(255,82,82,0.08)",
-            line=dict(width=0), showlegend=False, name="Below Start",
+            x=x_vals, y=above_y,
+            fill="tozeroy", fillcolor="rgba(105,240,174,0.10)",
+            line=dict(width=0), showlegend=False, hoverinfo="skip",
+            name="Above baseline",
         ))
+
+        # Main asset-value line
         fig.add_trace(go.Scatter(
-            x=nav.index, y=nav.values,
+            x=x_vals, y=y_vals,
             mode="lines",
             line=dict(color=COLOR_EQUITY, width=2),
-            name="Portfolio NAV (€)",
-            hovertemplate="%{x|%d %b %Y}<br>€%{y:,.0f}<extra></extra>",
+            name="Asset Value (€)",
+            hovertemplate="%{x|%d %b %Y}<br>Assets: €%{y:,.0f}<extra></extra>",
         ))
-        # Starting reference line
+
+        # Starting reference line (cost basis at inception)
         fig.add_hline(
             y=start_val, line_dash="dot",
-            line_color=COLOR_SUBTEXT, line_width=1, opacity=0.6,
+            line_color=COLOR_SUBTEXT, line_width=1, opacity=0.5,
         )
+
+        # Buy-event markers + dashed vertical lines
+        if buy_markers:
+            bm_x = [pd.Timestamp(d) for d, _ in buy_markers]
+            bm_y = [v for _, v in buy_markers]
+
+            for bx in bm_x:
+                fig.add_vline(
+                    x=bx.value / 1e6,   # Plotly needs ms-epoch for datetime vlines
+                    line_dash="dot", line_color="rgba(255,215,0,0.4)",
+                    line_width=1,
+                )
+
+            fig.add_trace(go.Scatter(
+                x=bm_x, y=bm_y,
+                mode="markers",
+                marker=dict(
+                    symbol="triangle-up", size=12,
+                    color="#FFD700",
+                    line=dict(color=COLOR_PANEL_BG, width=1),
+                ),
+                name="Buy Event",
+                hovertemplate="<b>Buy deployed</b><br>%{x|%d %b %Y}<br>Assets: €%{y:,.0f}<extra></extra>",
+            ))
+
     else:
         fig.add_annotation(
             text="No equity curve data available<br>Run Scripts 13 + 03 first",
@@ -729,8 +853,12 @@ def build_equity_curve_fig(
             showarrow=False, font=dict(size=13, color=COLOR_SUBTEXT),
         )
 
-    fig.update_layout(yaxis_title="Portfolio Value (€)")
-    return _apply_dark_theme(fig, "📈 Equity Curve")
+    fig.update_layout(
+        yaxis_title  = "Asset Value (€)",
+        yaxis        = dict(tickprefix="€", tickformat=",.0f"),
+        hovermode    = "x unified",
+    )
+    return _apply_dark_theme(fig, "📈 Portfolio Asset Value (Invested Capital)")
 
 
 def build_monthly_heatmap_fig(daily_returns: Optional[pd.Series]) -> go.Figure:
@@ -884,29 +1012,61 @@ def build_allocation_pie_fig(
     position_rows: List[PositionRow],
     company_info:  Dict,
 ) -> go.Figure:
-    """Panel 5: Asset allocation pie by asset class."""
+    """
+    Panel 5: Asset allocation donut — one slice per open position (not per asset class).
+
+    Each slice shows the symbol, its percentage weight, and on hover its P&L.
+    The donut centre annotation shows total invested value.
+    Colours are assigned round-robin from SYMBOL_COLOR_CYCLE so each position
+    has a distinct, legible colour even when all asset_class fields are 'Unknown'.
+    """
     fig = go.Figure()
 
     if position_rows:
-        from collections import defaultdict
-        by_class: Dict[str, float] = defaultdict(float)
-        for row in position_rows:
-            by_class[row.asset_class] += row.current_value_eur
+        total_value = sum(r.current_value_eur for r in position_rows)
 
-        labels  = list(by_class.keys())
-        values  = [by_class[l] for l in labels]
-        colors  = [ASSET_CLASS_COLORS.get(l, "#78909C") for l in labels]
+        labels   = []
+        values   = []
+        colors   = []
+        # Custom hover text: plain text (no HTML tags — Plotly strips them in pie)
+        hover_tx = []
+
+        for i, row in enumerate(position_rows):
+            pnl_sign  = "+" if row.unrealised_pnl_pct >= 0 else ""
+            sector_s  = row.sector if row.sector and row.sector != "Unknown" else row.asset_class
+            labels.append(row.symbol.split(".")[0])   # short ticker without exchange suffix
+            values.append(row.current_value_eur)
+            colors.append(SYMBOL_COLOR_CYCLE[i % len(SYMBOL_COLOR_CYCLE)])
+            hover_tx.append(
+                f"{row.symbol}\n"
+                f"Value: €{row.current_value_eur:,.0f}  |  "
+                f"P&L: {pnl_sign}{row.unrealised_pnl_pct:.1f}%\n"
+                f"Sector: {sector_s}"
+            )
 
         fig.add_trace(go.Pie(
-            labels=labels,
-            values=values,
-            marker=dict(colors=colors, line=dict(color=COLOR_PANEL_BG, width=2)),
-            textinfo="label+percent",
-            hovertemplate="%{label}<br>€%{value:,.0f} (%{percent})<extra></extra>",
-            textfont=dict(color=COLOR_TEXT, size=11),
-            hole=0.4,  # donut style
+            labels      = labels,
+            values      = values,
+            customdata  = hover_tx,
+            marker      = dict(colors=colors, line=dict(color=COLOR_PANEL_BG, width=2)),
+            textinfo    = "label+percent",
+            textfont    = dict(color=COLOR_TEXT, size=11),
+            hovertemplate = "%{customdata}<extra></extra>",
+            hole        = 0.42,
+            sort        = True,
+            direction   = "clockwise",
         ))
-        fig.update_layout(showlegend=True)
+
+        # Centre annotation: total asset value
+        fig.update_layout(
+            annotations=[dict(
+                text=f"€{total_value:,.0f}",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=15, color=COLOR_TEXT, family="Inter, sans-serif"),
+                xanchor="center", yanchor="middle",
+            )],
+            showlegend=True,
+        )
     else:
         fig.add_annotation(
             text="No open positions",
@@ -914,7 +1074,7 @@ def build_allocation_pie_fig(
             showarrow=False, font=dict(size=13, color=COLOR_SUBTEXT),
         )
 
-    return _apply_dark_theme(fig, "🥧 Asset Allocation")
+    return _apply_dark_theme(fig, "🥧 Asset Allocation by Position")
 
 
 # ============================================================================
@@ -1091,44 +1251,160 @@ def build_metrics_html(m: PortfolioMetrics) -> str:
 
 
 # ============================================================================
-# RISK PANEL  (from Script 23)
+# RISK PANEL
 # ============================================================================
 
 def build_risk_html(m: PortfolioMetrics) -> str:
-    """Render the risk metrics strip (shown only if Script 23 data is available)."""
-    has_risk = any([m.var_95_1d_eur, m.beta, m.hhi, m.information_ratio])
-    if not has_risk:
-        return f'<p style="color:{COLOR_SUBTEXT}; font-size:12px; padding:16px;">Risk metrics unavailable — run Script 23 first.</p>'
+    """
+    Render the risk & performance metrics sidebar panel.
 
-    def risk_item(label: str, value: str) -> str:
-        return f"""
-        <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid {COLOR_GRID};">
-            <span style="color:{COLOR_SUBTEXT}; font-size:12px;">{label}</span>
-            <span style="color:{COLOR_TEXT}; font-size:12px; font-weight:500;">{value}</span>
-        </div>"""
+    Always populated from the self-computed PortfolioMetrics fields
+    (NAV series, monthly returns, position P&L).  Script 23 metrics
+    (VaR, CVaR, Beta, IR, HHI) are appended as a second section if
+    that file was available at run time.
+    """
 
-    items = []
-    if m.var_95_1d_eur is not None:
-        items.append(risk_item("VaR 95% (1-day)", f"€{m.var_95_1d_eur:,.0f}"))
-    if m.cvar_95_1d_eur is not None:
-        items.append(risk_item("CVaR 95% (1-day)", f"€{m.cvar_95_1d_eur:,.0f}"))
-    if m.beta is not None:
-        color = COLOR_PROFIT if abs(m.beta) < 0.8 else COLOR_LOSS
-        items.append(risk_item("Beta vs SPY", f'<span style="color:{color}">{m.beta:.2f}</span>'))
-    if m.information_ratio is not None:
-        ir_color = COLOR_PROFIT if m.information_ratio > 0.5 else COLOR_LOSS
-        items.append(risk_item("Information Ratio", f'<span style="color:{ir_color}">{m.information_ratio:.2f}</span>'))
-    if m.hhi is not None:
-        eff_n = 1 / m.hhi if m.hhi > 0 else 0
-        items.append(risk_item("HHI (Concentration)", f"{m.hhi:.4f} (eff. N = {eff_n:.1f})"))
+    def row(label: str, value_html: str, sub: str = "") -> str:
+        sub_part = (
+            f'<div style="color:{COLOR_SUBTEXT};font-size:9px;margin-top:1px;">{sub}</div>'
+            if sub else ""
+        )
+        return f"""<div style="display:flex;justify-content:space-between;align-items:center;
+                       padding:7px 12px;border-bottom:1px solid #1A1A2E;">
+          <div style="color:{COLOR_SUBTEXT};font-size:11px;">{label}</div>
+          <div style="text-align:right;">
+            <div style="font-size:13px;font-weight:600;">{value_html}</div>{sub_part}
+          </div></div>"""
 
-    return f"""
-    <div style="background:{COLOR_PLOT_BG}; border:1px solid {COLOR_GRID}; border-radius:8px; padding:16px 20px;">
-        <div style="color:{COLOR_SUBTEXT}; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">
-            Risk Metrics (Script 23)
-        </div>
-        {"".join(items)}
+    def coloured(val: Optional[float], fmt: str,
+                 good_above: Optional[float] = None,
+                 bad_below:  Optional[float] = None,
+                 prefix: str = "", suffix: str = "",
+                 flip: bool = False) -> str:
+        """Return a coloured HTML value string or 'N/A'."""
+        if val is None:
+            return f'<span style="color:{COLOR_SUBTEXT}">N/A</span>'
+        if good_above is not None and bad_below is not None:
+            if (val >= good_above) ^ flip:
+                color = COLOR_PROFIT
+            elif (val <= bad_below) ^ flip:
+                color = COLOR_LOSS
+            else:
+                color = "#FFB74D"
+        elif good_above is not None:
+            color = COLOR_PROFIT if (val >= good_above) ^ flip else "#FFB74D"
+        elif bad_below is not None:
+            color = COLOR_LOSS if (val <= bad_below) ^ flip else COLOR_TEXT
+        else:
+            color = COLOR_TEXT
+        sign = "+" if val > 0 and "+" not in prefix else ""
+        return f'<span style="color:{color}">{sign}{prefix}{val:{fmt}}{suffix}</span>'
+
+    # ── Section 1: always-computed metrics ───────────────────────────────────
+    first_date = m.first_trade_date[:10] if m.first_trade_date else "—"
+    n_years    = ""
+    if m.first_trade_date:
+        try:
+            td = (date.today() - date.fromisoformat(m.first_trade_date[:10])).days
+            n_years = f"{td/365.25:.1f} yrs"
+        except Exception:
+            pass
+
+    start_nav = ""
+    end_nav   = ""
+
+    computed_rows = [
+        row("Total Return (NAV)",
+            coloured(m.total_return_pct,      ".1f", good_above=0.0, bad_below=-5.0, suffix="%"),
+            f"since {first_date}  {n_years}"),
+        row("Ann. Return (CAGR)",
+            coloured(m.annualised_return_pct,  ".2f", good_above=5.0, bad_below=0.0, suffix="%"),
+            "calendar-day basis"),
+        row("Asset P&L vs Cost",
+            coloured(m.asset_return_pct,       ".1f", good_above=0.0, bad_below=-10.0, suffix="%"),
+            f"cost basis €{m.cost_basis_eur:,.0f}" if m.cost_basis_eur else ""),
+        row("Ann. Volatility",
+            coloured(m.ann_volatility_pct,     ".2f", suffix="%") if m.ann_volatility_pct
+            else f'<span style="color:{COLOR_SUBTEXT}">N/A</span>',
+            "annualised daily σ"),
+        row("Max Drawdown",
+            coloured(m.max_drawdown_pct,       ".2f", bad_below=-10.0, suffix="%", flip=True),
+            "peak-to-trough (NAV)"),
+        row("Sharpe Ratio",
+            coloured(m.sharpe_ratio,           ".2f", good_above=1.0, bad_below=0.0),
+            f"rf = {RISK_FREE_RATE_ANNUAL*100:.0f}%  ·  252-day"),
+        row("Calmar Ratio",
+            coloured(m.calmar_ratio,           ".2f", good_above=0.5, bad_below=0.0),
+            "CAGR / |max drawdown|"),
+        row("Monthly Win Rate",
+            coloured(m.monthly_win_rate_pct,   ".1f", good_above=55.0, bad_below=40.0, suffix="%"),
+            "% of months positive"),
+        row("Avg Win / Avg Loss",
+            (f'<span style="color:{COLOR_PROFIT}">+{m.avg_win_monthly_pct:.2f}%</span>'
+             f' / <span style="color:{COLOR_LOSS}">{m.avg_loss_monthly_pct:.2f}%</span>'
+             if m.avg_win_monthly_pct is not None and m.avg_loss_monthly_pct is not None
+             else f'<span style="color:{COLOR_SUBTEXT}">N/A</span>'),
+            "monthly averages"),
+        row("Profit Factor (monthly)",
+            coloured(m.monthly_profit_factor,  ".2f", good_above=1.5, bad_below=1.0, suffix="×"),
+            "Σwins / |Σlosses|"),
+    ]
+
+    sections_html = f"""
+    <div style="background:{COLOR_PLOT_BG}; border:1px solid {COLOR_GRID};
+                border-radius:8px; overflow:hidden; margin-bottom:4px;">
+      <div style="background:#0D0D1A; padding:10px 12px; border-bottom:1px solid {COLOR_GRID};">
+        <div style="color:{COLOR_SUBTEXT}; font-size:10px; text-transform:uppercase;
+                    letter-spacing:1px;">📊 Risk &amp; Performance Metrics</div>
+        <div style="color:{COLOR_SUBTEXT}; font-size:9px; margin-top:3px;">
+          NAV basis · rf = {RISK_FREE_RATE_ANNUAL*100:.0f}%</div>
+      </div>
+      {"".join(computed_rows)}
     </div>"""
+
+    # ── Section 2: Script 23 extras (only if present) ────────────────────────
+    has_s23 = any(v is not None for v in [
+        m.var_95_1d_eur, m.cvar_95_1d_eur, m.beta, m.information_ratio, m.hhi
+    ])
+    if has_s23:
+        def risk_row(label: str, value_html: str) -> str:
+            return f"""<div style="display:flex;justify-content:space-between;
+                           padding:7px 12px;border-bottom:1px solid #1A1A2E;">
+              <span style="color:{COLOR_SUBTEXT};font-size:11px;">{label}</span>
+              <span style="font-size:12px;font-weight:500;">{value_html}</span>
+            </div>"""
+
+        s23_items = []
+        if m.var_95_1d_eur is not None:
+            s23_items.append(risk_row("VaR 95% (1-day)",
+                f'<span style="color:{COLOR_LOSS}">€{m.var_95_1d_eur:,.0f}</span>'))
+        if m.cvar_95_1d_eur is not None:
+            s23_items.append(risk_row("CVaR 95% (1-day)",
+                f'<span style="color:{COLOR_LOSS}">€{m.cvar_95_1d_eur:,.0f}</span>'))
+        if m.beta is not None:
+            beta_c = COLOR_PROFIT if abs(m.beta) < 0.8 else COLOR_LOSS
+            s23_items.append(risk_row("Beta vs SPY",
+                f'<span style="color:{beta_c}">{m.beta:.2f}</span>'))
+        if m.information_ratio is not None:
+            ir_c = COLOR_PROFIT if m.information_ratio > 0.5 else COLOR_LOSS
+            s23_items.append(risk_row("Information Ratio",
+                f'<span style="color:{ir_c}">{m.information_ratio:.2f}</span>'))
+        if m.hhi is not None:
+            eff_n = 1 / m.hhi if m.hhi > 0 else 0
+            s23_items.append(risk_row("HHI (Concentration)",
+                f'<span style="color:{COLOR_TEXT}">{m.hhi:.4f} · N={eff_n:.1f}</span>'))
+
+        sections_html += f"""
+    <div style="background:{COLOR_PLOT_BG}; border:1px solid {COLOR_GRID};
+                border-radius:8px; overflow:hidden;">
+      <div style="background:#0D0D1A; padding:10px 12px; border-bottom:1px solid {COLOR_GRID};">
+        <div style="color:{COLOR_SUBTEXT}; font-size:10px; text-transform:uppercase;
+                    letter-spacing:1px;">🔬 Risk Analytics (Script 23)</div>
+      </div>
+      {"".join(s23_items)}
+    </div>"""
+
+    return sections_html
 
 
 # ============================================================================
@@ -1436,7 +1712,7 @@ def main() -> int:
 
     # ── STEP 2: Reconstruct equity curve ──────────────────────────────────────
     logger.info("\n[2/7] Reconstructing equity curve…")
-    nav, daily_returns = reconstruct_equity_curve(
+    nav, daily_returns, asset_nav, buy_markers = reconstruct_equity_curve(
         trades         = trades,
         portfolio      = portfolio,
         start_date     = start_date,
@@ -1447,11 +1723,24 @@ def main() -> int:
         logger.info(f"  Equity curve: {len(nav)} data points "
                     f"({nav.index[0]} → {nav.index[-1]})")
         logger.info(f"  Latest NAV: €{nav.iloc[-1]:,.0f}")
+        if asset_nav is not None:
+            logger.info(f"  Asset-only value: €{asset_nav.iloc[-1]:,.0f}  "
+                        f"({len(buy_markers)} buy event(s))")
     else:
         logger.warning("  Equity curve could not be reconstructed.")
 
     # ── STEP 3: Compute summary metrics ───────────────────────────────────────
     logger.info("\n[3/7] Computing performance metrics…")
+
+    # Build position rows first so compute_metrics can derive cost-basis P&L
+    position_rows_prelim = build_position_rows(
+        portfolio      = portfolio,
+        company_info   = company_info,
+        load_prices    = load_prices,
+        account_equity = args.account_equity,
+        top_n          = args.top_n,
+    )
+
     metrics = compute_metrics(
         nav            = nav,
         daily_returns  = daily_returns,
@@ -1459,6 +1748,7 @@ def main() -> int:
         portfolio      = portfolio,
         risk_data      = risk_data,
         account_equity = args.account_equity,
+        position_rows  = position_rows_prelim,
     )
     if metrics.total_return_pct is not None:
         logger.info(f"  Total return:    {metrics.total_return_pct:+.1f}%")
@@ -1471,18 +1761,13 @@ def main() -> int:
 
     # ── STEP 4: Build position table ──────────────────────────────────────────
     logger.info("\n[4/7] Building position table…")
-    position_rows = build_position_rows(
-        portfolio      = portfolio,
-        company_info   = company_info,
-        load_prices    = load_prices,
-        account_equity = args.account_equity,
-        top_n          = args.top_n,
-    )
+    # Re-use prelim rows (already built above for metrics); just log count
+    position_rows = position_rows_prelim
     logger.info(f"  {len(position_rows)} positions in table.")
 
     # ── STEP 5: Build all charts ───────────────────────────────────────────────
     logger.info("\n[5/7] Rendering charts…")
-    equity_fig     = build_equity_curve_fig(nav, start_date)
+    equity_fig     = build_equity_curve_fig(asset_nav, buy_markers, start_date)
     heatmap_fig    = build_monthly_heatmap_fig(daily_returns)
     drawdown_fig   = build_drawdown_fig(nav)
     sharpe_fig     = build_rolling_sharpe_fig(daily_returns)
