@@ -83,15 +83,15 @@ warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 # PATHS
 # ============================================================================
 
-PROJECT_ROOT    = Path(__file__).parent.parent
-DATA_CACHE_DIR  = PROJECT_ROOT / "data_cache"
-INDICATORS_DIR  = DATA_CACHE_DIR / "indicators"
-SIGNALS_DIR     = DATA_CACHE_DIR / "signals"
-QUALIFIED_DIR   = DATA_CACHE_DIR / "qualified"
-PORTFOLIO_DIR   = DATA_CACHE_DIR / "portfolio"
-FUNDAMENTALS_DIR = DATA_CACHE_DIR / "fundamentals"
-REPORTS_DIR     = PROJECT_ROOT / "reports" / "charts"
-LOG_DIR         = PROJECT_ROOT / "logs"
+PROJECT_ROOT     = Path(__file__).parent.parent
+DATA_CACHE_DIR   = PROJECT_ROOT / "data_cache"
+INDICATORS_DIR   = DATA_CACHE_DIR / "indicators"
+SIGNALS_DIR      = DATA_CACHE_DIR / "signals"
+QUALIFIED_DIR    = DATA_CACHE_DIR / "qualified"
+PORTFOLIO_DIR    = DATA_CACHE_DIR / "portfolio"
+FUNDAMENTALS_DIR = PROJECT_ROOT.parent / "data_load" / "data_cache" / "fundamentals"
+REPORTS_DIR      = PROJECT_ROOT / "reports" / "charts"
+LOG_DIR          = PROJECT_ROOT / "logs"
 
 # ============================================================================
 # CONFIGURATION CONSTANTS
@@ -522,7 +522,12 @@ def load_rebalancing_recommendations() -> Tuple[Dict[str, List[str]], Set[str]]:
         return {}, set()
 
     # Most recent file (lexicographically sorted: YYYY-MM_recommendations.json)
-    latest_file = sorted(rec_files)[-1]
+    #latest_file = sorted(rec_files)[-1]
+    # Most recently *generated* file (by filesystem modification time).
+    # Sorting by filename (YYYY-MM) picks the most recent calendar month,
+    # which is wrong when Script 11 is re-run for an earlier period — the
+    # re-run produces the freshest data but has an older month in its name.
+    latest_file = max(rec_files, key=lambda p: p.stat().st_mtime)
     logger.info(f"  Loading: {latest_file.name}")
 
     raw = _load_json(latest_file)
@@ -1609,6 +1614,20 @@ function applyFilters() {{
   }});
 
   document.getElementById("no-results").style.display = shown === 0 ? "block" : "none";
+
+  // If the currently displayed chart was just hidden by this filter,
+  // auto-select the first still-visible item so the main panel always
+  // shows a symbol that matches the active filter state.
+  if (activeId) {{
+    const activeNav = document.getElementById("nav-" + activeId);
+    if (activeNav && activeNav.classList.contains("hidden")) {{
+      const first = document.querySelector(".nav-item:not(.hidden)");
+      if (first) {{
+        const safeId = first.getAttribute("data-symbol").replace(/\\./g, "_");
+        showChart(safeId);
+      }}
+    }}
+  }}
 }}
 
 // ââ Show a chart (lazy Plotly render) ââââââââââââââââââââââââââââââââââââ
@@ -1818,20 +1837,28 @@ def main() -> None:
     n_cap_merged = 0
     n_key_miss   = 0
 
+    # REPLACE WITH:
     for ci_key, info in company_info_raw.items():
         if not isinstance(info, dict):
             continue
 
-        # Resolve bare key → full EODHD symbol via index.
-        # Also try the "symbol" field stored inside the entry (Script 2
-        # writes 'symbol': eodhd_symbol) as a secondary lookup.
-        full_sym = (
-            base_index.get(ci_key)                                    # e.g. "AAPL" → "AAPL.US"
-            or base_index.get(info.get("symbol", ""))                 # internal field
-            or base_index.get(info.get("symbol", "").rsplit(".", 1)[0])  # strip suffix from internal field
-        )
+        # company_info.json is keyed by full EODHD symbols (e.g. "EWY.NYSE"),
+        # identical to the metadata dict keys — direct lookup, no index needed.
+        # The base_index indirection was written under a wrong assumption that
+        # company_info used bare tickers; the actual data uses full symbols.
+        full_sym = ci_key if ci_key in metadata else None
+        if full_sym is None:
+            n_key_miss += 1
+            continue
 
-        # Read market_cap with explicit key iteration
+        # ── Merge instrument_type unconditionally ──────────────────────────
+        # Must NOT be gated on market_cap: ETFs often have no market_cap in
+        # company_info.json, so they would otherwise keep the default "stock".
+        inst_type = info.get("instrument_type")
+        if inst_type:
+            metadata[full_sym]["asset_type"] = inst_type
+
+        # ── Merge market_cap only when present and positive ────────────────
         cap_val = None
         for _k in _CAP_KEYS:
             _v = info.get(_k)
@@ -1839,27 +1866,15 @@ def main() -> None:
                 cap_val = _v
                 break
 
-        if cap_val is None:
-            continue
-        try:
-            cap_float = float(cap_val)
-        except (TypeError, ValueError):
-            continue
-        if cap_float <= 0:
-            continue
-
-        n_cap_found += 1
-
-        if full_sym and full_sym in metadata:
-            metadata[full_sym]["market_cap"] = cap_float
-            # Also merge instrument_type if present (Script 02 writes this)
-            inst_type = info.get("instrument_type")
-            if inst_type:
-                # instrument_type from Script 02 is already normalized ('stock', 'etf', 'crypto', etc.)
-                metadata[full_sym]["asset_type"] = inst_type
-            n_cap_merged += 1
-        else:
-            n_key_miss += 1
+        if cap_val is not None:
+            try:
+                cap_float = float(cap_val)
+                if cap_float > 0:
+                    metadata[full_sym]["market_cap"] = cap_float
+                    n_cap_found += 1
+                    n_cap_merged += 1
+            except (TypeError, ValueError):
+                pass
 
     logger.info(
         f"  Market cap        : {n_cap_found} entries with cap>0  |  "

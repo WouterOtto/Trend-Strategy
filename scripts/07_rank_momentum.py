@@ -386,6 +386,7 @@ def rank_momentum(as_of_date: str) -> Tuple[List[Dict], Dict]:
             continue
 
         # Calculate momentum
+        # Calculate momentum
         score, supplementary = calculate_momentum_score(df, as_of_date, symbol)
 
         if score is None:
@@ -393,6 +394,20 @@ def rank_momentum(as_of_date: str) -> Tuple[List[Dict], Dict]:
             failed_count += 1
             failed_symbols.append(symbol)
             continue
+
+        # Sanity cap: scores above 500 almost always indicate an unadjusted
+        # corporate action (reverse split) inflating the SMA_200 baseline.
+        # Flag for human review; still write to ranked output for transparency.
+        MOMENTUM_SCORE_WARN_THRESHOLD = 500
+        data_quality_flag = ''
+        if score > MOMENTUM_SCORE_WARN_THRESHOLD:
+            logger.warning(
+                f"  FLAG {symbol}: momentum_score={score:.1f} exceeds "
+                f"{MOMENTUM_SCORE_WARN_THRESHOLD} — likely unadjusted corporate "
+                f"action. Included in ranked output but flagged. Verify price "
+                f"history before trading."
+            )
+            data_quality_flag = 'extreme_momentum_score'
 
         # Pull metadata (name, sector, exchange, asset_class)
         meta = metadata.get(symbol, {})
@@ -422,8 +437,10 @@ def rank_momentum(as_of_date: str) -> Tuple[List[Dict], Dict]:
             'roc_120d':     supplementary.get('roc_120d'),
 
             # ââ Audit trail ââââââââââââââââââââââââââââââââââââââââââââââââââ
-            'as_of_date':    as_of_date,
-            'scoring_formula': 'SMA200_deviation',  # explicit formula tag
+            # ── Audit trail ──────────────────────────────────────────────────
+            'as_of_date':        as_of_date,
+            'scoring_formula':   'SMA200_deviation',  # explicit formula tag
+            'data_quality_flag': data_quality_flag,   # '' = clean; 'extreme_momentum_score' = review
         }
 
         results.append(entry)

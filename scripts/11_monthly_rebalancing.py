@@ -1937,11 +1937,47 @@ def generate_rebalancing_recommendations(
         )
 
     # â”€â”€ Step 3: Generate three portfolio scenarios â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    logger.info("\n[3/8] Generating three portfolio scenariosâ€¦")
+    # ── Step 3: Generate three portfolio scenarios ───────────────────────────
+    logger.info("\n[3/8] Generating three portfolio scenarios…")
     max_positions  = get_max_positions(account_equity)
+
+    # Pre-scenario diagnostic: warn if ETF/crypto are so low-ranked that all
+    # three scenarios will converge on the same stock-only selection.
+    _ranked_acs = [r.get('asset_class', '') for r in ranked_universe]
+    _etf_ranks  = [r['rank'] for r in ranked_universe if r.get('asset_class') == 'etf']
+    _untradeable = position_sizes.get('_meta', {}).get('untradeable_high_unit_price', [])
+    if _etf_ranks:
+        best_etf_rank = min(_etf_ranks)
+        if best_etf_rank > max_positions * 2:
+            logger.warning(
+                f"  ⚠ REGIME ALERT: Best-ranked ETF is rank {best_etf_rank} "
+                f"(Scenario 1 pool = top {max_positions * 2}). "
+                f"All three scenarios will likely converge on identical stock-only "
+                f"selections. This is a market regime effect, not a system error — "
+                f"ETF momentum is lagging stocks this cycle."
+            )
+    if _untradeable:
+        logger.info(
+            f"  ℹ {len(_untradeable)} ranked symbol(s) untradeable at current "
+            f"account size (€{account_equity:,.0f}) — excluded from all scenarios. "
+            f"Symbols: {[u['symbol'] for u in _untradeable[:5]]}"
+            f"{'…' if len(_untradeable) > 5 else ''}"
+        )
     
     logger.info(f"  Max positions for â‚¬{account_equity:,.0f} account: {max_positions}")
     
+    # Attach regime flags to cb_status so _collect_warnings can surface them
+    if _etf_ranks and min(_etf_ranks) > max_positions * 2:
+        cb_status["regime_convergence_warning"] = (
+            f"REGIME NOTE: All three scenarios converge this cycle. "
+            f"Best-ranked ETF is rank {min(_etf_ranks)} vs. top stock at rank 1. "
+            f"ETF allocation targets cannot be met through momentum-based selection. "
+            f"This is a market condition, not a system error."
+        )
+    cb_status["untradeable_count"] = len(_untradeable)
+    cb_status["max_position_eur"]  = round(MAX_POSITION_PCT * account_equity, 0) \
+        if 'MAX_POSITION_PCT' in dir() else round(0.08 * account_equity, 0)
+
     # Scenario 1: Pure Momentum (top 2Ã— only)
     logger.info("\n  Scenario 1: Pure Momentum")
     logger.info("    Strategy: Select top instruments by momentum rank only")
@@ -2398,9 +2434,23 @@ def _collect_warnings(
             )
 
     # Circuit breaker advisory
+    # Circuit breaker advisory
     for b in cb_status.get("breakers", []):
         if b["severity"] == "MEDIUM":
             warnings.append(f"CB-ADVISORY [{b['breaker']}]: {b['detail']}")
+
+    # Regime convergence advisory (added by caller when all scenarios are identical)
+    if cb_status.get("regime_convergence_warning"):
+        warnings.append(cb_status["regime_convergence_warning"])
+
+    # Untradeable high-unit-price symbols advisory
+    if cb_status.get("untradeable_count", 0) > 0:
+        warnings.append(
+            f"ACCOUNT SIZE: {cb_status['untradeable_count']} ranked symbol(s) excluded "
+            f"from all scenarios because their unit price exceeds the 8% position cap "
+            f"(€{cb_status.get('max_position_eur', 0):,.0f}) at current account size. "
+            f"These will become tradeable as account equity grows."
+        )
 
     return warnings
 

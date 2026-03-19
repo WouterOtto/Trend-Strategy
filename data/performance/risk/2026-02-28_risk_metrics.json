@@ -1,0 +1,200 @@
+{
+  "as_of_date": "2026-02-28",
+  "generated_at": "2026-03-17T14:59:26.537143",
+  "lookback_days": 252,
+  "account_equity_eur": 20000.0,
+  "position_count": 7,
+  "var_results": [
+    {
+      "confidence_pct": 95.0,
+      "horizon_days": 1,
+      "var_eur": 319.41,
+      "var_pct": 1.5971,
+      "cvar_eur": 572.27,
+      "cvar_pct": 2.8614,
+      "tail_obs": 13,
+      "is_alert": "False"
+    },
+    {
+      "confidence_pct": 95.0,
+      "horizon_days": 5,
+      "var_eur": 714.22,
+      "var_pct": 3.5711,
+      "cvar_eur": 1279.64,
+      "cvar_pct": 6.3982,
+      "tail_obs": 13,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 95.0,
+      "horizon_days": 20,
+      "var_eur": 1428.45,
+      "var_pct": 7.1422,
+      "cvar_eur": 2559.27,
+      "cvar_pct": 12.7964,
+      "tail_obs": 13,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 99.0,
+      "horizon_days": 1,
+      "var_eur": 655.18,
+      "var_pct": 3.2759,
+      "cvar_eur": 957.95,
+      "cvar_pct": 4.7897,
+      "tail_obs": 3,
+      "is_alert": "False"
+    },
+    {
+      "confidence_pct": 99.0,
+      "horizon_days": 5,
+      "var_eur": 1465.03,
+      "var_pct": 7.3252,
+      "cvar_eur": 2142.04,
+      "cvar_pct": 10.7102,
+      "tail_obs": 3,
+      "is_alert": false
+    },
+    {
+      "confidence_pct": 99.0,
+      "horizon_days": 20,
+      "var_eur": 2930.07,
+      "var_pct": 14.6503,
+      "cvar_eur": 4284.08,
+      "cvar_pct": 21.4204,
+      "tail_obs": 3,
+      "is_alert": false
+    }
+  ],
+  "benchmark_metrics": {
+    "benchmark_symbol": "SPY.US",
+    "benchmark_name": "S&P 500 (SPY)",
+    "lookback_days": 252,
+    "portfolio_return_pct": 25.7814,
+    "benchmark_return_pct": 18.632,
+    "active_return_pct": 7.1494,
+    "beta": 0.4188,
+    "alpha_ann_pct": 15.8442,
+    "r_squared": 0.1991,
+    "portfolio_vol_ann_pct": 17.9638,
+    "benchmark_vol_ann_pct": 19.1386,
+    "tracking_error_ann_pct": 19.5487,
+    "information_ratio": 0.3672,
+    "sharpe_ratio": 1.1706,
+    "benchmark_sharpe": 0.7918,
+    "shared_trading_days": 251
+  },
+  "concentration": {
+    "hhi": 0.346049,
+    "effective_n": 2.89,
+    "top1_weight_pct": 55.05,
+    "top3_weight_pct": 78.79,
+    "top5_weight_pct": 94.97,
+    "position_count": 7,
+    "regime": "High",
+    "is_alert": true
+  },
+  "correlation": {
+    "symbols": [
+      "SPY5.XETRA",
+      "AMZN.NASDAQ",
+      "SLVR.XETRA",
+      "EQQQ.XETRA",
+      "SHA0.XETRA",
+      "SOLG.LSE"
+    ],
+    "matrix": [
+      [
+        1.0,
+        0.4085514688725325,
+        0.11479789712802967,
+        0.9104203230417329,
+        0.091007514299588,
+        0.1530598800790724
+      ],
+      [
+        0.4085514688725325,
+        1.0,
+        0.1522803706066604,
+        0.48265580849707296,
+        0.07904739551509835,
+        -0.02445290452172963
+      ],
+      [
+        0.11479789712802967,
+        0.1522803706066604,
+        1.0,
+        0.11164073050775145,
+        -0.0616122067246091,
+        -0.0018409112480728164
+      ],
+      [
+        0.9104203230417329,
+        0.48265580849707296,
+        0.11164073050775145,
+        1.0,
+        0.15896736679500786,
+        0.15909399126492432
+      ],
+      [
+        0.091007514299588,
+        0.07904739551509835,
+        -0.0616122067246091,
+        0.15896736679500786,
+        1.0,
+        0.16454525676896958
+      ],
+      [
+        0.1530598800790724,
+        -0.02445290452172963,
+        -0.0018409112480728164,
+        0.15909399126492432,
+        0.16454525676896958,
+        1.0
+      ]
+    ],
+    "avg_pairwise_corr": 0.1932,
+    "max_pairwise_corr": 0.9104,
+    "high_corr_pairs": [
+      [
+        "SPY5.XETRA",
+        "EQQQ.XETRA",
+        0.9104
+      ]
+    ],
+    "lookback_days": 63,
+    "is_alert": true
+  },
+  "factor_exposure": {
+    "size_score": 11.6058,
+    "size_label": "Mega/Large-Cap",
+    "momentum_score_avg": 12.6343,
+    "momentum_label": "Moderate Momentum",
+    "quality_score_avg": 5.0738,
+    "quality_label": "Average Quality",
+    "value_available": false,
+    "value_note": "P/E data not available; use Script 02 PE ratio when present",
+    "us_weight_pct": 13.25,
+    "eu_weight_pct": 78.71,
+    "crypto_weight_pct": 0.0,
+    "other_weight_pct": 8.04
+  },
+  "drawdown": {
+    "lookback_days": 252,
+    "max_drawdown_pct": -17.9074,
+    "current_drawdown_pct": -2.8681,
+    "avg_drawdown_pct": -3.9565,
+    "longest_dd_days": 87,
+    "recovery_days": 0,
+    "calmar_ratio": 1.3916
+  },
+  "alerts": [
+    "WARN: 1-day 95% VaR is 1.60% of portfolio (threshold: 1.5%)",
+    "WARN: Max drawdown -17.91% exceeds -10% threshold",
+    "CRITICAL: HHI 0.3460 indicates High concentration (effective N=2.9)",
+    "WARN: Top 3 positions represent 78.8% of portfolio",
+    "WARN: High-correlation pairs: SPY5.XETRA/EQQQ.XETRA (0.91)"
+  ],
+  "risk_score": 4,
+  "risk_label": "Moderate"
+}

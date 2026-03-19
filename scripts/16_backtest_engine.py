@@ -126,7 +126,7 @@ DEFAULTS = dict(
     # Trend qualification
     sma_fast           = 100,
     sma_slow           = 250,
-    adx_threshold      = 15,
+    adx_threshold      = 20,
     adx_weak           = 10,    # must be < adx_threshold; was 15 (logical conflict)
     adx_weakness_days  = 3,
     # Momentum
@@ -538,6 +538,13 @@ class BacktestEngine:
         self.cb_vix_below_days: int   = 0
         self.peak_equity:       float = self.p["initial_equity"]
         self.trough_equity:     float = self.p["initial_equity"]
+        # CB1 uses a separate high-water mark (cb_peak_equity) that resets whenever
+        # CB1 clears.  This decouples the CB1 trigger threshold from the all-time
+        # peak_equity (which is kept intact for drawdown *reporting*).  Without this
+        # separation, CB1 measures every drawdown against the original ATH, causing
+        # the halt threshold to be permanently breached whenever equity is in cash
+        # and unable to recover to that ATH — the root of the cash-lock deadlock.
+        self.cb_peak_equity:    float = self.p["initial_equity"]
         # FIX-5: Regime filter state — True = bullish (entries allowed),
         # False = bearish (new entries halted; existing positions run freely).
         # Defaults to True so the filter is inactive when no SPY data is available.
@@ -627,7 +634,8 @@ class BacktestEngine:
             # 5. Mark-to-market
             port_val     = self._mark_to_market(d_ts, price_data)
             self.equity  = self.cash + port_val
-            self.peak_equity = max(self.peak_equity, self.equity)
+            self.peak_equity    = max(self.peak_equity,    self.equity)  # reporting HWM
+            self.cb_peak_equity = max(self.cb_peak_equity, self.equity)  # CB1 trigger HWM
             drawdown     = (self.equity - self.peak_equity) / self.peak_equity
 
             # Track trough during halt periods (needed for CB1 trough-recovery reset)
@@ -857,7 +865,7 @@ class BacktestEngine:
                 slip = self._slippage(pos.asset_class)
                 self._close_position(sym, d_ts, close * (1 - slip), "rotation")
 
-        if qualified.empty or self.cb_halt_entries:
+        if qualified.empty or self.cb_halt_entries or not self.regime_bullish:
             if self.cb_halt_entries:
                 self.log.info(
                     f"[{d_ts.date()}] Entries halted (CB: {self.cb_halt_reason})"
@@ -1062,44 +1070,105 @@ class BacktestEngine:
     def _check_circuit_breakers(
         self, d_ts: pd.Timestamp, vix_data: Optional[pd.Series]
     ) -> None:
-        dd = (self.equity - self.peak_equity) / self.peak_equity if self.peak_equity > 0 else 0
+        # CB1 drawdown is measured against cb_peak_equity, NOT the reporting
+        # peak_equity.  cb_peak_equity resets to current equity whenever CB1
+        # clears, so the new halt threshold is 30 % below the current (lower)
+        # level rather than the original all-time high.
+        #
+        # Why this matters:
+        #   peak_recovery (dd >= threshold) using reporting peak_equity can flip
+        #   back and forth every time mark-to-market nudges equity above or below
+        #   the -30 % line from the ATH, causing CB1 to oscillate on/off with each
+        #   small bounce.  Every reset opens a new entry window and the strategy
+        #   keeps taking losing positions throughout the drawdown period.
+        #   Using cb_peak_equity eliminates this: after a reset the threshold is
+        #   -30 % from a much lower base, so normal volatility no longer triggers
+        #   spurious resets.
+        #
+        # Deadlock scenario (all positions stopped out, equity frozen in cash):
+        #   cb_peak_equity = ATH → dd_cb = -31 % → trigger fires every day →
+        #   recovery block unreachable via peak_recovery alone → permanent halt.
+        #   The all_cash condition (Condition C below) breaks this: once the
+        #   portfolio is fully in cash after the minimum cooling-off period the
+        #   halt is lifted and cb_peak_equity is reset to current equity, giving
+        #   the strategy a clean slate.
 
-        # CB1: Drawdown halt
-        if dd < self.p["cb_drawdown"]:
+        dd_cb = (
+            (self.equity - self.cb_peak_equity) / self.cb_peak_equity
+            if self.cb_peak_equity > 0 else 0.0
+        )
+
+        # ----------------------------------------------------------------
+        # CB1: Drawdown halt — trigger
+        # ----------------------------------------------------------------
+        if dd_cb < self.p["cb_drawdown"]:
             if not self.cb_halt_entries:
                 self.log.warning(
-                    f"[{d_ts.date()}] CB1: drawdown {dd:.1%} -> entries halted"
+                    f"[{d_ts.date()}] CB1: cb_drawdown {dd_cb:.1%} -> entries halted"
                 )
                 self.cb_halt_date  = d_ts
                 self.trough_equity = self.equity
             self.cb_halt_entries = True
-            self.cb_halt_reason  = f"drawdown={dd:.1%}"
-        elif self.cb_halt_entries and "drawdown" in self.cb_halt_reason:
-            # Primary reset: drawdown has recovered above the halt threshold
-            peak_recovery = dd >= self.p["cb_drawdown"]
+            self.cb_halt_reason  = f"drawdown={dd_cb:.1%}"
 
-            # Secondary reset: equity has bounced >= cb_recovery_pct from trough
-            # AND the halt has been active for at least cb_min_halt_days calendar days
-            trough_bounce = (
-                self.trough_equity > 0
-                and (self.equity / self.trough_equity - 1) >= self.p["cb_recovery_pct"]
-            )
+        # ----------------------------------------------------------------
+        # CB1: Drawdown halt — recovery (separate if, not elif)
+        #
+        # Must NOT be an elif: the trigger block above would fire every day
+        # while dd_cb < threshold, making an elif unreachable when equity is
+        # frozen in cash — the cash-lock deadlock.
+        # ----------------------------------------------------------------
+        if self.cb_halt_entries and "drawdown" in self.cb_halt_reason:
             halt_days = (
                 (d_ts - self.cb_halt_date).days
                 if self.cb_halt_date is not None else 999
             )
-            time_gate = halt_days >= self.p["cb_min_halt_days"]
 
-            if peak_recovery or (trough_bounce and time_gate):
+            # Condition A: cb_drawdown has naturally recovered.
+            # Because cb_peak_equity resets on each CB1 clear, this will not
+            # oscillate — recovery requires gaining back meaningful ground, not
+            # just a one-day bounce above the original ATH -30 % line.
+            peak_recovery = dd_cb >= self.p["cb_drawdown"]
+
+            # Condition B: equity has bounced >= cb_recovery_pct from its trough
+            #              AND the minimum cooling-off period has elapsed.
+            trough_bounce = (
+                self.trough_equity > 0
+                and (self.equity / self.trough_equity - 1) >= self.p["cb_recovery_pct"]
+                and halt_days >= self.p["cb_min_halt_days"]
+            )
+
+            # Condition C: portfolio fully de-risked (all positions stopped out)
+            #              AND minimum halt days elapsed.
+            # This is the primary deadlock-breaker: once every position has been
+            # stopped out the strategy is 100 % cash and has zero active risk.
+            # The CB has served its purpose; lifting it here + resetting
+            # cb_peak_equity allows a clean re-start without the threshold being
+            # permanently below the old ATH.
+            all_cash = (
+                len(self.positions) == 0
+                and halt_days >= self.p["cb_min_halt_days"]
+            )
+
+            if peak_recovery or trough_bounce or all_cash:
+                if all_cash and not (peak_recovery or trough_bounce):
+                    trigger = f"all_cash ({halt_days}d)"
+                elif peak_recovery:
+                    trigger = "peak_recovery"
+                else:
+                    trigger = "trough_bounce"
                 self.log.info(
-                    f"[{d_ts.date()}] CB1 reset: dd={dd:.1%} | "
+                    f"[{d_ts.date()}] CB1 reset: dd_cb={dd_cb:.1%} | "
                     f"trough_bounce={self.equity / self.trough_equity - 1:.1%} | "
-                    f"halt_days={halt_days} | "
-                    f"trigger={'peak_recovery' if peak_recovery else 'trough_bounce'}"
+                    f"halt_days={halt_days} | trigger={trigger}"
                 )
                 self.cb_halt_entries = False
                 self.cb_halt_reason  = ""
                 self.cb_halt_date    = None
+                # Reset the CB1 high-water mark to current equity.
+                # The next halt can only fire if equity drops 30 % from HERE,
+                # not from the original ATH — prevents immediate re-trigger.
+                self.cb_peak_equity  = self.equity
 
         # CB2: VIX spike
         if vix_data is not None:

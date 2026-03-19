@@ -190,6 +190,7 @@ try:
         load_price_data,
         load_qualified_universe,
         load_vix_data,
+        load_spy_data,
         DEFAULTS as BT_DEFAULTS,
         compute_indicators,
     )
@@ -207,6 +208,7 @@ except ModuleNotFoundError:
         load_price_data         = _mod.load_price_data
         load_qualified_universe = _mod.load_qualified_universe
         load_vix_data           = _mod.load_vix_data
+        load_spy_data           = _mod.load_spy_data
         BT_DEFAULTS             = _mod.DEFAULTS
         compute_indicators      = _mod.compute_indicators
         _SCRIPT16_ALIAS         = "16_backtest_engine"
@@ -233,14 +235,14 @@ except ModuleNotFoundError:
 # ===========================================================================
 
 PARAM_GRID = {
-    "sma_slow":          [200, 250, 300],          # CV=0.092 excellent — centred on mean=264
+    "sma_slow":          [200, 250, 300, 350],  # extended: prev mean=261, add lower+upper headroom
     # "adx_threshold":     [10, 15, 20, 25],         # expanded down: hit 15-min in 5/7 windows
-    "init_stop_mult":    [2.0, 2.5, 3.0, 3.5], # expanded down: hit 2.0-min in 7/7 windows
+    #"init_stop_mult":    [2.0, 2.5, 3.0, 3.5], # expanded down: hit 2.0-min in 7/7 windows
     "trail_stop_mult":   [3.0, 3.5, 4.0, 4.5], # expanded up: hit 4.0-max in 7/7 windows
-    "max_positions":     [30, 35, 40, 45],         # expanded up: hit 25-max in 7/7 windows
+    "max_positions":     [20, 25, 30, 35, 40, 45],         # expanded up: hit 25-max in 7/7 windows
 }
-# Grid stats: 3×4x4x4 = 192 combinations | 1×3 = 3 indicator buckets (64 combos/bucket)
-# Optimal --n-workers 3 (all buckets complete in one parallel round)
+# Grid stats: 4×4x4 = 96 combinations | 1×4 = 4 indicator buckets (64 combos/bucket)
+# Optimal --n-workers 5
 
 PARAM_GRID_FAST = {
     #"sma_fast":          [50, 100],                # representative subset of full range
@@ -579,7 +581,7 @@ def _bucket_worker(args: tuple) -> tuple:
     """
     (script16_path, price_slice, bucket_combos,
      is_start_str, is_end_str,
-     metadata, vix_dict, window_id) = args
+     metadata, vix_dict, spy_dict, window_id) = args
 
     # Dynamic import of Script 16 in subprocess context
     _spec = importlib.util.spec_from_file_location("_be16_worker", script16_path)
@@ -597,6 +599,12 @@ def _bucket_worker(args: tuple) -> tuple:
     if vix_dict:
         vix_data = pd.Series(vix_dict)
         vix_data.index = pd.to_datetime(vix_data.index)
+
+    # Reconstitute SPY series if provided
+    spy_data: Optional[pd.Series] = None
+    if spy_dict:
+        spy_data = pd.Series(spy_dict)
+        spy_data.index = pd.to_datetime(spy_data.index)
 
     # OPT-1: precompute indicators once for this bucket (all combos share same key)
     try:
@@ -618,6 +626,7 @@ def _bucket_worker(args: tuple) -> tuple:
                 params         = params,
                 metadata       = metadata,
                 vix_data       = vix_data,
+                spy_data       = spy_data,
                 log_level      = logging.CRITICAL,
             )
             sharpe = _extract_sharpe_simple(result)
@@ -706,6 +715,7 @@ def optimize_in_sample(
     is_end:         pd.Timestamp,
     initial_equity: float,
     vix_data:       Optional[pd.Series],
+    spy_data:       Optional[pd.Series],
     metadata:       Optional[Dict],
     window_id:      int,
     logger:         logging.Logger,
@@ -796,6 +806,11 @@ def optimize_in_sample(
         if vix_data is not None:
             vix_dict = {str(k): float(v) for k, v in vix_data.items() if not pd.isna(v)}
 
+        # Serialise SPY as dict for pickle safety
+        spy_dict: Optional[Dict] = None
+        if spy_data is not None:
+            spy_dict = {str(k): float(v) for k, v in spy_data.items() if not pd.isna(v)}
+
         # Build work items — one per indicator bucket
         work_items = [
             (
@@ -806,6 +821,7 @@ def optimize_in_sample(
                 is_end.strftime("%Y-%m-%d"),
                 metadata,
                 vix_dict,
+                spy_dict,
                 window_id,
             )
             for _, bucket_combos in bucket_list
@@ -866,6 +882,7 @@ def optimize_in_sample(
                         params         = params,
                         metadata       = metadata,
                         vix_data       = vix_data,
+                        spy_data       = spy_data,
                         log_level      = logging.CRITICAL,
                     )
                     sharpe = extract_sharpe(result)
@@ -969,6 +986,7 @@ def validate_out_of_sample(
     oos_end:          pd.Timestamp,
     initial_equity:   float,
     vix_data:         Optional[pd.Series],
+    spy_data:         Optional[pd.Series],
     metadata:         Optional[Dict],
     window_id:        int,
     logger:           logging.Logger,
@@ -1046,6 +1064,7 @@ def validate_out_of_sample(
             params         = best_params,
             metadata       = metadata,
             vix_data       = vix_data,
+            spy_data       = spy_data,
             log_level      = logging.CRITICAL,
         )
         sharpe = extract_sharpe(result)
@@ -1432,6 +1451,7 @@ def run_walk_forward(
     price_data:     Dict,
     metadata:       Dict,
     vix_data:       Optional[pd.Series],
+    spy_data:       Optional[pd.Series],
     data_start:     pd.Timestamp,
     data_end:       pd.Timestamp,
     initial_equity: float,
@@ -1512,6 +1532,7 @@ def run_walk_forward(
             is_end         = w["is_end"],
             initial_equity = initial_equity,
             vix_data       = vix_data,
+            spy_data       = spy_data,
             metadata       = metadata,
             window_id      = wid,
             logger         = logger,
@@ -1540,6 +1561,7 @@ def run_walk_forward(
             oos_end         = w["oos_end"],
             initial_equity  = initial_equity,
             vix_data        = vix_data,
+            spy_data        = spy_data,
             metadata        = metadata,
             window_id       = wid,
             logger          = logger,
@@ -2004,6 +2026,13 @@ def main() -> None:
         else "VIX unavailable — circuit breaker CB2 inactive"
     )
 
+    spy_data = load_spy_data()
+    logger.info(
+        "SPY loaded — regime filter ACTIVE (new entries gated on SPY > SMA200)"
+        if spy_data is not None
+        else "SPY unavailable — regime filter INACTIVE (all entries permitted)"
+    )
+
     # -----------------------------------------------------------------------
     # Pre-flight: warn if data range is shorter than recommended
     # -----------------------------------------------------------------------
@@ -2055,6 +2084,7 @@ def main() -> None:
         price_data     = price_data,
         metadata       = metadata,
         vix_data       = vix_data,
+        spy_data       = spy_data,
         data_start     = data_start,
         data_end       = data_end,
         initial_equity = args.initial_equity,
@@ -2139,6 +2169,7 @@ def run_walk_forward_optimization(
     fast_mode:      bool       = False,
     metadata:       Optional[Dict]      = None,
     vix_data:       Optional[pd.Series] = None,
+    spy_data:       Optional[pd.Series] = None,
     log_level:      int        = logging.WARNING,
     n_workers:      int        = 1,
 ) -> Dict:
@@ -2179,6 +2210,7 @@ def run_walk_forward_optimization(
         price_data     = price_data,
         metadata       = metadata or {},
         vix_data       = vix_data,
+        spy_data       = spy_data,
         data_start     = data_start,
         data_end       = data_end,
         initial_equity = initial_equity,

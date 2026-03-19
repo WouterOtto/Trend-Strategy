@@ -637,6 +637,7 @@ def size_portfolio(
     # -------------------------------------------------------------------------
     sized: List[Dict] = []
     zero_share_skipped: List[str] = []
+    high_unit_price_skipped: List[Dict] = []
 
     for candidate in candidates:
         symbol = candidate["symbol"]
@@ -669,11 +670,24 @@ def size_portfolio(
 
         if sizing["shares"] == 0:
             zero_share_skipped.append(symbol)
-            logger.warning(
-                f"  SKIP {symbol}: rounds to 0 shares "
-                f"(price €{close:.2f} > final_value €{sizing['final_value_before_rounding']:.2f}). "
-                "Account size too small for this instrument at current risk parameters."
-            )
+            min_tradeable_equity = round(close / MAX_POSITION_PCT, 0)
+            if close > MAX_POSITION_PCT * account_equity:
+                high_unit_price_skipped.append({        # ← add this line
+                    "symbol": symbol,                   # ← add this line
+                    "price_eur": round(close, 2),       # ← add this line
+                    "min_account_equity_eur": round(close / MAX_POSITION_PCT, 0),  # ← add
+                })  
+                logger.info(
+                    f"  SKIP {symbol}: untradeable at current account size "
+                    f"(price €{close:,.2f} exceeds max position €{MAX_POSITION_PCT * account_equity:,.0f}). "
+                    f"Tradeable when account equity ≥ €{min_tradeable_equity:,.0f}."
+                )
+            else:
+                logger.warning(
+                    f"  SKIP {symbol}: rounds to 0 shares "
+                    f"(price €{close:.2f} > final_value €{sizing['final_value_before_rounding']:.2f}). "
+                    "Account size too small for this instrument at current risk parameters."
+                )
             continue
 
         atr_pct     = candidate.get("atr_20_pct")
@@ -777,23 +791,24 @@ def size_portfolio(
     top3_pct    = round(sum(sorted_vals[:3]) / account_equity * 100, 2) if sorted_vals else 0.0
 
     summary: Dict = {
-        "as_of_date":            sized[0]["as_of_date"] if sized else None,
-        "account_equity":        round(account_equity, 2),
-        "max_positions":         max_positions,
-        "total_candidates":      len(ranked_symbols),
-        "total_sized":           len(sized),
-        "zero_share_skipped":    zero_share_skipped,
+        "as_of_date":                   sized[0]["as_of_date"] if sized else None,
+        "account_equity":               round(account_equity, 2),
+        "max_positions":                max_positions,
+        "total_candidates":             len(ranked_symbols),
+        "total_sized":                  len(sized),
+        "zero_share_skipped":           zero_share_skipped,
+        "untradeable_high_unit_price":  high_unit_price_skipped,
         "sizing_formula":        "Base_Risk / Stop_Distance_Pct",
-        "target_risk_per_pos":   TARGET_RISK_PER_POSITION,
-        "total_allocated_eur":   round(total_allocated, 2),
-        "total_allocated_pct":   round(total_allocated / account_equity * 100, 2),
-        "cash_reserve_eur":      round(cash_reserve, 2),
-        "cash_reserve_pct":      round(cash_reserve_pct, 2),
-        "top3_concentration_pct": top3_pct,
-        "asset_class_allocation": asset_alloc,
-        "sector_allocation":      sector_alloc,
-        "warnings":               all_warnings,
-        "generated_at":           datetime.now().isoformat(),
+        "target_risk_per_pos":          TARGET_RISK_PER_POSITION,
+        "total_allocated_eur":          round(total_allocated, 2),
+        "total_allocated_pct":          round(total_allocated / account_equity * 100, 2),
+        "cash_reserve_eur":             round(cash_reserve, 2),
+        "cash_reserve_pct":             round(cash_reserve_pct, 2),
+        "top3_concentration_pct":       top3_pct,
+        "asset_class_allocation":       asset_alloc,
+        "sector_allocation":            sector_alloc,
+        "warnings":                     all_warnings,
+        "generated_at":                 datetime.now().isoformat(),
     }
 
     return sized, summary
