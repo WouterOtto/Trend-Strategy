@@ -173,6 +173,13 @@ REPORTS_DIR    = PROJECT_ROOT / "reports" / "backtest"
 LOG_DIR        = PROJECT_ROOT / "logs"
 
 # ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
+# ---------------------------------------------------------------------------
 # Script 16 path (needed by subprocess workers for dynamic import)
 # ---------------------------------------------------------------------------
 _SCRIPT16_DIR  = Path(__file__).resolve().parent
@@ -219,66 +226,28 @@ except ModuleNotFoundError:
 
 
 # ===========================================================================
-# PARAMETER GRID  (Architecture v3.8 — 3,600 combinations)
-#
-# Grid evolution log:
-#   v3.3  1,296 combos — original grid (multiple params at edge)
-#   v3.5  2,880 combos — expanded stop multipliers downward
-#   v3.7  2,880 combos — OOS 6m→12m, stability bug fixes
-#   v3.8  3,600 combos — grid edges resolved per WFO run 3 red flags:
-#           adx_threshold  : added 10 (optimizer hit 15-min in 5/7 windows)
-#           init_stop_mult : added 1.5 (optimizer hit 2.0-min in 7/7 windows)
-#           trail_stop_mult: added 4.5, 5.0 (optimizer hit 4.0-max in 7/7 windows)
-#           max_positions  : added 30 (optimizer hit 25-max in 7/7 windows)
-#           sma_slow       : restored 150, 350 (narrowing in v3.7 was premature)
-#           sma_fast       : unchanged [30,50,100] — still unstable CV=0.374
+# PARAMETER GRID — sourced from config/strategy_parameters.json via P.
+# Edit optimization_grid / optimization_grid_fast / fixed_params sections
+# in strategy_parameters.json. Grid evolution history is in _comment fields.
 # ===========================================================================
 
-PARAM_GRID = {
-    "sma_slow":          [200, 250, 300, 350],  # extended: prev mean=261, add lower+upper headroom
-    # "adx_threshold":     [10, 15, 20, 25],         # expanded down: hit 15-min in 5/7 windows
-    #"init_stop_mult":    [2.0, 2.5, 3.0, 3.5], # expanded down: hit 2.0-min in 7/7 windows
-    "trail_stop_mult":   [3.0, 3.5, 4.0, 4.5], # expanded up: hit 4.0-max in 7/7 windows
-    "max_positions":     [20, 25, 30, 35, 40, 45],         # expanded up: hit 25-max in 7/7 windows
-}
-# Grid stats: 4×4x4 = 96 combinations | 1×4 = 4 indicator buckets (64 combos/bucket)
-# Optimal --n-workers 5
+PARAM_GRID      = P.optimization_grid
+PARAM_GRID_FAST = P.optimization_grid_fast
+FIXED_PARAMS    = P.fixed_params
 
-PARAM_GRID_FAST = {
-    #"sma_fast":          [50, 100],                # representative subset of full range
-    "sma_slow":          [200, 250, 300],           # matches full grid sma_slow
-    #"adx_threshold":     [10, 20],                  # expanded: include new lower bound
-    #"init_stop_mult":    [1.5, 2.0, 2.5],           # expanded: include new lower bound
-    "trail_stop_mult":   [3.5, 4.0, 4.5],           # centred on current optimum range
-    "max_positions":     [20, 25],                  # centred on current optimum range
-}
-# Fast grid stats: 1×3×3×2 = 18 combinations | 1×3 = 3 indicator buckets (6 combos/bucket)
+# Walk-forward window defaults — sourced from config/strategy_parameters.json.
+WFO_IS_MONTHS   = P.walk_forward.is_months
+WFO_OOS_MONTHS  = P.walk_forward.oos_months
+WFO_ROLL_MONTHS = P.walk_forward.roll_months
 
-# Fixed params not in the optimization grid
-FIXED_PARAMS = {
-    "sma_fast":          100,           # CV=0.374 unstable — keep full range"adx_weak":          15,
-    "adx_threshold":     15,
-    "init_stop_mult":    2.5,
-    "trail_activation":  0.15,
-    "risk_per_trade":    0.02,
-    "cost_bps":          10,
-    "pos_floor_pct":     0.005,
-    "pos_ceil_pct":      0.08,
-}
-
-# Walk-forward window defaults
-WFO_IS_MONTHS   = 24   # in-sample period (months)
-WFO_OOS_MONTHS  = 12   # out-of-sample period (months) — extended from 6 to reduce regime noise
-WFO_ROLL_MONTHS = 6    # roll-forward step (months)
-
-# Stability thresholds
-STABILITY_EXCELLENT   = 0.8
-STABILITY_GOOD        = 0.7
-STABILITY_ACCEPTABLE  = 0.6
-OOS_CONSISTENCY_PASS  = 0.70
-OOS_CONSISTENCY_WARN  = 0.60
-PARAM_CV_EXCELLENT    = 0.10
-PARAM_CV_GOOD         = 0.20
+# Stability thresholds — sourced from config/strategy_parameters.json.
+STABILITY_EXCELLENT  = P.walk_forward.stability_excellent
+STABILITY_GOOD       = P.walk_forward.stability_good
+STABILITY_ACCEPTABLE = P.walk_forward.stability_acceptable
+OOS_CONSISTENCY_PASS = P.walk_forward.oos_consistency_pass
+OOS_CONSISTENCY_WARN = P.walk_forward.oos_consistency_warn
+PARAM_CV_EXCELLENT   = P.walk_forward.param_cv_excellent
+PARAM_CV_GOOD        = P.walk_forward.param_cv_good
 
 # ---------------------------------------------------------------------------
 # OPT-1: Indicator-affecting parameter set.

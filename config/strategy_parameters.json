@@ -16,8 +16,8 @@
 
   "trend_qualification": {
     "_comment": "Three-condition trend filter (Script 6). All three must be TRUE simultaneously. adx_threshold = entry gate. adx_weak = exit trigger (must be < adx_threshold). adx_weakness_days = consecutive days below adx_weak before exit.",
-    "adx_threshold": 20,
-    "adx_weak": 10,
+    "adx_threshold": 25,
+    "adx_weak": 15,
     "adx_weakness_days": 3,
     "min_history_days": 252,
     "min_valid_indicators": 20,
@@ -111,7 +111,6 @@
   "optimization_grid": {
     "_comment": "Full WFO parameter search space (Script 17). Only include parameters whose variation meaningfully changes strategy behaviour. Fixed params (sma_fast, adx_threshold, risk_per_trade) are in fixed_params below. Grid must never have all values at one edge — expand if optimizer converges to boundary.",
     "sma_slow":       [200, 250, 300],
-    "init_stop_mult": [2.0, 2.5, 3.0, 3.5],
     "trail_stop_mult":[3.0, 3.5, 4.0, 4.5],
     "max_positions":  [30, 35, 40, 45]
   },
@@ -126,7 +125,7 @@
   "fixed_params": {
     "_comment": "Parameters excluded from WFO grid. sma_fast CV=0.374 (too unstable to optimize). adx_threshold=15 (expanded from 20 — WFO converged to lower boundary). risk_per_trade, trail_activation, cost_bps are strategy-design constants.",
     "sma_fast": 100,
-    "adx_threshold": 15,
+    "adx_threshold": 25,
     "init_stop_mult": 2.5,
     "trail_activation": 0.08,
     "risk_per_trade": 0.02,
