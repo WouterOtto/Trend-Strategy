@@ -111,29 +111,30 @@ DATA_DIR       = PROJECT_ROOT / "data"
 REPORTS_DIR    = PROJECT_ROOT / "reports" / "portfolio"
 LOG_DIR        = PROJECT_ROOT / "logs"
 
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2 / strategy_parameters.json)
 # ============================================================================
 
-TARGET_RISK_PER_POSITION: float = 0.02   # 2.0% of equity at risk per position
-MIN_POSITION_PCT:          float = 0.005  # 0.5% floor
-MAX_POSITION_PCT:          float = 0.08   # 8.0% ceiling
+# Position sizing constants — sourced from config/strategy_parameters.json.
+TARGET_RISK_PER_POSITION:   float = P.position_sizing.risk_per_trade
+MIN_POSITION_PCT:           float = P.position_sizing.pos_floor_pct
+MAX_POSITION_PCT:           float = P.position_sizing.pos_ceil_pct
+ENTRY_LIMIT_OFFSET:         float = P.position_sizing.entry_limit_offset
+MAX_CRYPTO_ALLOCATION_PCT:  float = P.portfolio_constraints.max_crypto_pct
+MAX_SECTOR_ALLOCATION_PCT:  float = P.portfolio_constraints.max_sector_pct
+MIN_CASH_RESERVE_PCT:       float = P.portfolio_constraints.min_cash_pct
+MAX_TOP3_CONCENTRATION_PCT: float = P.portfolio_constraints.max_top3_concentration_pct
+MAX_STOP_DISTANCE_PCT:      float = P.stops.max_stop_distance_pct
 
-ENTRY_LIMIT_OFFSET:        float = 0.005  # +0.5% above close for limit order
-
-MAX_CRYPTO_ALLOCATION_PCT: float = 0.20   # 20% cap on total crypto exposure
-MAX_SECTOR_ALLOCATION_PCT: float = 0.30   # 30% warning threshold per sector
-MIN_CASH_RESERVE_PCT:      float = 0.05   # 5% minimum unallocated equity
-MAX_TOP3_CONCENTRATION_PCT: float = 0.30  # 30% circuit-breaker threshold (top-3)
-MAX_STOP_DISTANCE_PCT:     float = 0.40   # 40% cap — prevents outsized positions on very tight stops
-
-# Account-size ÃÂ¢Ã¢ÂÂ Ã¢ÂÂ max position count  (Architecture ÃÂÃÂ§3.1)
-POSITION_COUNT_SCHEDULE = [
-    (25_000,  10),
-    (50_000,  15),
-    (100_000, 20),
-]
-DEFAULT_MAX_POSITIONS = 25  # accounts ÃÂ¢Ã¢ÂÂ°ÃÂ¥ ÃÂ¢Ã¢ÂÂÃÂ¬100,000
+# Position count schedule — sourced from config/strategy_parameters.json.
+# Use P.position_sizing.max_positions_for_equity(equity) at call sites.
 
 # ============================================================================
 # LOGGING
@@ -169,19 +170,13 @@ def get_max_positions(account_equity: float) -> int:
     Return the maximum number of simultaneous positions allowed for an
     account of the given equity size.
 
-    Schedule (Architecture ÃÂÃÂ§3.1):
-        < ÃÂ¢Ã¢ÂÂÃÂ¬25,000   ÃÂ¢Ã¢ÂÂ Ã¢ÂÂ  10 positions
-        < ÃÂ¢Ã¢ÂÂÃÂ¬50,000   ÃÂ¢Ã¢ÂÂ Ã¢ÂÂ  15 positions
-        < ÃÂ¢Ã¢ÂÂÃÂ¬100,000  ÃÂ¢Ã¢ÂÂ Ã¢ÂÂ  20 positions
-        ÃÂ¢Ã¢ÂÂ°ÃÂ¥ ÃÂ¢Ã¢ÂÂÃÂ¬100,000  ÃÂ¢Ã¢ÂÂ Ã¢ÂÂ  25 positions
+    Schedule is defined in config/strategy_parameters.json under
+    position_sizing.position_count_schedule and loaded via P.
 
     Rationale: smaller accounts must limit positions to avoid
     disproportionate transaction costs and over-diversification risk.
     """
-    for threshold, count in POSITION_COUNT_SCHEDULE:
-        if account_equity < threshold:
-            return count
-    return DEFAULT_MAX_POSITIONS
+    return P.position_sizing.max_positions_for_equity(account_equity)
 
 
 def validate_date(date_str: str) -> None:
@@ -690,7 +685,7 @@ def size_portfolio(
                 )
             continue
 
-        atr_pct     = candidate.get("atr_20_pct")
+        atr_pct     = candidate.get("atr_pct")
         limit_price = round(close * (1 + ENTRY_LIMIT_OFFSET), 4)
 
         position_entry: Dict = {
@@ -709,10 +704,10 @@ def size_portfolio(
             **sizing,
             # Trend metrics (from Script 7 — stored for transparency)
             "momentum_score":   candidate.get("momentum_score"),
-            "sma_50":           candidate.get("sma_50"),
-            "sma_200":          candidate.get("sma_200"),
-            "adx_14":           candidate.get("adx_14"),
-            "atr_20_pct":       atr_pct,
+            "sma_fast":           candidate.get("sma_fast"),
+            "sma_slow":          candidate.get("sma_slow"),
+            "adx":           candidate.get("adx"),
+            "atr_pct":       atr_pct,
             # ROC supplementary (not used for sizing)
             "roc_20d":          candidate.get("roc_20d"),
             "roc_60d":          candidate.get("roc_60d"),
@@ -868,9 +863,9 @@ def save_sizing_csv(sized_positions: List[Dict], output_file: Path) -> None:
     Columns (ordered for readability):
         rank, symbol, name, exchange, sector, asset_class,
         shares, close_price, limit_price, position_value_eur, position_pct,
-        atr_20_pct, stop_distance_pct, effective_stop_pct, base_risk, raw_value,
-        clipped, clip_reason, momentum_score, adx_14,
-        sma_50, sma_200, roc_20d, roc_60d, roc_120d, as_of_date
+        atr_pct, stop_distance_pct, effective_stop_pct, base_risk, raw_value,
+        clipped, clip_reason, momentum_score, adx,
+        sma_fast, sma_slow, roc_20d, roc_60d, roc_120d, as_of_date
     """
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -884,10 +879,10 @@ def save_sizing_csv(sized_positions: List[Dict], output_file: Path) -> None:
         "rank", "symbol", "name", "exchange", "sector", "asset_class",
         "shares", "close_price", "limit_price",
         "position_value_eur", "position_pct",
-        "atr_20_pct", "stop_distance_pct", "effective_stop_pct",
+        "atr_pct", "stop_distance_pct", "effective_stop_pct",
         "base_risk", "raw_value", "clipped", "clip_reason",
-        "momentum_score", "adx_14",
-        "sma_50", "sma_200",
+        "momentum_score", "adx",
+        "sma_fast", "sma_slow",
         "roc_20d", "roc_60d", "roc_120d",
         "is_new_entry", "as_of_date",
     ]
@@ -926,7 +921,7 @@ def print_sizing_summary(sized_positions: List[Dict], summary: Dict, top_n: int 
             f"{pos['shares']:>5}  "
             f"ÃÂ¢Ã¢ÂÂÃÂ¬{pos['position_value_eur']:>8,.0f}  "
             f"{pos['position_pct']:>5.2f}%  "
-            f"{pos['atr_20_pct']:>6.2f}  "
+            f"{pos['atr_pct']:>6.2f}  "
             f"{pos.get('stop_distance_pct', 0):>6.1f}%  "
             f"{clipped_flag:>5}  "
             f"{pos['momentum_score']:>+8.2f}  "

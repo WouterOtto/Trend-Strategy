@@ -105,16 +105,22 @@ REPORTS_DIR    = PROJECT_ROOT / "reports" / "portfolio"
 CONFIG_DIR     = PROJECT_ROOT / "config"
 LOG_DIR        = PROJECT_ROOT / "logs"
 
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2 / strategy_parameters.json)
 # ============================================================================
 
-# Initial stop: set once at entry, fixed
-INITIAL_STOP_MULTIPLIER: float = 3.0   # Initial_Stop = Entry - (3.0 × ATR)
-
-# Trailing stop: activates after ACTIVATION_THRESHOLD profit
-TRAILING_STOP_MULTIPLIER: float = 4.0  # Trailing_Stop = Close - (4.0 × ATR)
-TRAILING_ACTIVATION_PCT: float  = 0.15  # 15% profit required to activate
+# Stop parameters — sourced from config/strategy_parameters.json.
+INITIAL_STOP_MULTIPLIER:  float = P.stops.init_stop_mult
+TRAILING_STOP_MULTIPLIER: float = P.stops.trail_stop_mult
+TRAILING_ACTIVATION_PCT:  float = P.stops.trail_activation
+MAX_STOP_DISTANCE_PCT:    float = P.stops.max_stop_distance_pct
 
 # ============================================================================
 # LOGGING
@@ -249,7 +255,7 @@ def load_momentum_ranked(as_of_date: str) -> Tuple[Dict, Dict]:
     Returns:
         Tuple of (positions_dict, metadata_dict).
         positions_dict is keyed by symbol; each entry contains
-        entry_price (=close), atr_20_pct, adx_14 and all other
+        entry_price (=close), atr_pct, adx and all other
         fields needed to calculate initial stop levels.
 
     Raises:
@@ -351,7 +357,7 @@ def load_indicators(symbol: str, as_of_date: str) -> Optional[pd.DataFrame]:
         or None if the file is missing or no rows fall within the date range.
 
     Required columns (set by Script 5):
-        close, atr_20_pct, sma_50, sma_200, adx_14
+        close, atr_pct, sma_fast, sma_slow, adx
     """
     indicators_file = INDICATORS_DIR / f"{symbol}_indicators.parquet"
 
@@ -601,14 +607,14 @@ def process_position_stop(
             )
 
         entry_price = position.get("entry_price") or position.get("close_price")
-        atr_pct     = position.get("atr_20_pct")
+        atr_pct     = position.get("atr_pct")
 
         if entry_price is None or entry_price <= 0:
             logger.warning(f"  {symbol}: Missing entry_price – SKIPPING stop calculation.")
             return _error_stop(symbol, position, as_of_date, "missing_entry_price")
 
         if atr_pct is None or atr_pct <= 0:
-            logger.warning(f"  {symbol}: Missing or zero atr_20_pct – SKIPPING.")
+            logger.warning(f"  {symbol}: Missing or zero atr_pct – SKIPPING.")
             return _error_stop(symbol, position, as_of_date, "missing_atr")
 
         atr_abs = atr_abs_from_pct(atr_pct, entry_price)
@@ -660,8 +666,8 @@ def process_position_stop(
     if orig_initial_stop is None:
         entry_atr_pct = float(
             existing_state.get("entry_atr_pct")
-            or existing_state.get("atr_20_pct")
-            or position.get("atr_20_pct", 0)
+            or existing_state.get("atr_pct")
+            or position.get("atr_pct", 0)
         )
         if entry_atr_pct > 0:
             entry_atr_abs   = atr_abs_from_pct(entry_atr_pct, orig_entry_price)
@@ -693,7 +699,7 @@ def process_position_stop(
             or position.get("entry_price")
             or 0
         )
-        current_atr_pct = float(latest.get("atr_20_pct", position["atr_20_pct"]))
+        current_atr_pct = float(latest.get("atr_pct", position["atr_pct"]))
     else:
         # Fallback: use values from position_sizes.json (slightly stale but safe)
         logger.warning(
@@ -701,7 +707,7 @@ def process_position_stop(
             "falling back to position_sizes values for current close/ATR."
         )
         current_close   = float(position.get("close_price") or position["entry_price"])
-        current_atr_pct = float(position.get("atr_20_pct", 0))
+        current_atr_pct = float(position.get("atr_pct", 0))
 
     current_atr_abs = atr_abs_from_pct(current_atr_pct, current_close)
     profit_pct      = (current_close - orig_entry_price) / orig_entry_price
@@ -991,7 +997,7 @@ def calculate_all_stops(
             "entry_price": entry_px,
             "close_price": entry_px,
             "close":       entry_px,
-            "atr_20_pct":  existing.get("atr_20_pct") or existing.get("entry_atr_pct") or 0,
+            "atr_pct":  existing.get("atr_pct") or existing.get("entry_atr_pct") or 0,
             "is_new_entry": False,
         }
 

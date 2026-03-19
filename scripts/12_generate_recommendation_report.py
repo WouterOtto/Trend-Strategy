@@ -581,8 +581,8 @@ def build_exits(rec: Dict, S: dict) -> List:
                 Paragraph(eur(e.get("unrealized_pnl")),              S["cell_right"]),
                 Paragraph(eur(e.get("current_stop")),                S["cell_right"]),
                 Paragraph(num(e.get("momentum_score"), 4),           S["cell_right"]),
-                Paragraph(num(e.get("adx_14"), 1),                   S["cell_right"]),
-                Paragraph(pct(e.get("atr_20_pct")),                  S["cell_right"]),
+                Paragraph(num(e.get("adx"), 1),                   S["cell_right"]),
+                Paragraph(pct(e.get("atr_pct")),                  S["cell_right"]),
                 Paragraph(safe(e.get("detail")),                     S["body_small"]),
             ])
         story.append(data_table(headers, rows, widths, S,
@@ -634,8 +634,8 @@ def build_exits(rec: Dict, S: dict) -> List:
                 Paragraph(eur(e.get("unrealized_pnl")),              S["cell_right"]),
                 Paragraph(fmt_date(e.get("entry_date")),             S["cell_center"]),
                 Paragraph(num(e.get("momentum_score"), 4),           S["cell_right"]),
-                Paragraph(num(e.get("adx_14"), 1),                   S["cell_right"]),
-                Paragraph(pct(e.get("atr_20_pct")),                  S["cell_right"]),
+                Paragraph(num(e.get("adx"), 1),                   S["cell_right"]),
+                Paragraph(pct(e.get("atr_pct")),                  S["cell_right"]),
             ])
         story.append(data_table(headers, rows, widths, S, header_bg=C_ORANGE))
         # Note about stale price indicator
@@ -690,8 +690,8 @@ def build_entries(rec: Dict, S: dict) -> List:
             Paragraph(pct(e.get("position_pct")),        S["cell_right"]),
             Paragraph(eur(e.get("initial_stop")),        S["cell_right"]),
             Paragraph(pct(e.get("stop_distance_pct")),   S["cell_right"]),
-            Paragraph(num(e.get("adx_14"), 1),           S["cell_right"]),
-            Paragraph(pct(e.get("atr_20_pct")),          S["cell_right"]),
+            Paragraph(num(e.get("adx"), 1),           S["cell_right"]),
+            Paragraph(pct(e.get("atr_pct")),          S["cell_right"]),
             Paragraph(num(e.get("momentum_score"), 4),   S["cell_right"]),
         ])
 
@@ -1493,8 +1493,8 @@ def build_top50_table(rec: Dict, S: dict) -> List:
             Paragraph(tick("S2"),              td_c),
             Paragraph(tick("S3"),              td_c),
             Paragraph(score_str,               score_p),
-            Paragraph(num(c.get("adx_14"), 1), td_r),
-            Paragraph(pct(c.get("atr_20_pct")),td_r),
+            Paragraph(num(c.get("adx"), 1), td_r),
+            Paragraph(pct(c.get("atr_pct")),td_r),
             Paragraph(pct(ret12),              td_r),
             Paragraph(pct(ret6),               td_r),
             Paragraph(pct(ret3),               td_r),
@@ -1738,8 +1738,8 @@ def build_multi_scenario_pdf(rec: Dict, output_path: Path) -> None:
                     eur(entry.get("entry_price")),
                     eur(entry.get("position_value_eur")),
                     eur(entry.get("initial_stop") or entry.get("stop_loss")),
-                    num(entry.get("adx_14"), 1),
-                    pct(entry.get("atr_20_pct")),
+                    num(entry.get("adx"), 1),
+                    pct(entry.get("atr_pct")),
                     f"{entry.get('momentum_score', 0):.1f}"
                 ])
             

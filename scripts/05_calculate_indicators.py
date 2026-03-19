@@ -76,28 +76,23 @@ INDICATORS_DIR = DATA_CACHE_DIR / "indicators"
 METADATA_DIR = DATA_CACHE_DIR / "metadata"
 LOG_DIR = PROJECT_ROOT / "logs"
 
-# Indicator parameters (from Architecture v3.2)
+# ---------------------------------------------------------------------------
+# Load centralized parameters — single source of truth for all values.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
+# Indicator parameters — sourced from config/strategy_parameters.json via P.
 INDICATOR_PARAMS = {
-    'sma_fast': 50,      # Fast moving average period
-    'sma_slow': 200,     # Slow moving average period
-    'atr_period': 20,    # Average True Range period
-    'adx_period': 14,    # Average Directional Index period
+    'sma_fast':   P.indicators.sma_fast,
+    'sma_slow':   P.indicators.sma_slow,
+    'atr_period': P.indicators.atr_period,
+    'adx_period': P.indicators.adx_period,
 }
 
-# Validation thresholds
-#
-# MIN_HISTORY_DAYS = 252 (Architecture v3.2 standard, matches Script 4 screening filter)
-#   - Script 1 initial mode downloads ~400 calendar days = ~275 trading days
-#   - 252 trading days = 1 year; sufficient to compute SMA_200 with a small buffer
-#   - DO NOT raise above 275 or every symbol from an initial download will be rejected
-#
-# MIN_VALID_INDICATORS = 20 (minimum rows where all four indicators are non-NaN)
-#   - SMA_200 needs 200 bars before producing values; with 275 total bars only
-#     ~75 rows will have valid SMA_200 (275 - 200 + 1)
-#   - Downstream scripts only use the LATEST row; 20 ensures a meaningful
-#     recent window without over-constraining the dataset
-MIN_HISTORY_DAYS = 252
-MIN_VALID_INDICATORS = 20
+MIN_HISTORY_DAYS     = P.trend_qualification.min_history_days
+MIN_VALID_INDICATORS = P.trend_qualification.min_valid_indicators
 
 # ============================================================================
 # LOGGING SETUP
@@ -336,10 +331,10 @@ class IndicatorCalculator:
         
         Returns:
             DataFrame with original data plus indicator columns:
-                - sma_50: 50-period SMA
-                - sma_200: 200-period SMA
-                - atr_20_pct: 20-period ATR (percentage)
-                - adx_14: 14-period ADX
+                - sma_fast: 50-period SMA
+                - sma_slow: 200-period SMA
+                - atr_pct: 20-period ATR (percentage)
+                - adx: 14-period ADX
         
         Raises:
             ValueError: If insufficient data for calculations
@@ -358,16 +353,16 @@ class IndicatorCalculator:
         
         # Calculate each indicator
         logger.debug(f"  Calculating SMA_50...")
-        result_df['sma_50'] = self.calculate_sma(result_df, self.params['sma_fast'])
+        result_df['sma_fast'] = self.calculate_sma(result_df, self.params['sma_fast'])
         
         logger.debug(f"  Calculating SMA_200...")
-        result_df['sma_200'] = self.calculate_sma(result_df, self.params['sma_slow'])
+        result_df['sma_slow'] = self.calculate_sma(result_df, self.params['sma_slow'])
         
         logger.debug(f"  Calculating ATR_20_pct...")
-        result_df['atr_20_pct'] = self.calculate_atr_pct(result_df, self.params['atr_period'])
+        result_df['atr_pct'] = self.calculate_atr_pct(result_df, self.params['atr_period'])
         
         logger.debug(f"  Calculating ADX_14...")
-        result_df['adx_14'] = self.calculate_adx(result_df, self.params['adx_period'])
+        result_df['adx'] = self.calculate_adx(result_df, self.params['adx_period'])
         
         # Filter to as_of_date if specified
         if as_of_date:
@@ -376,7 +371,7 @@ class IndicatorCalculator:
         
         # Validate sufficient valid indicators after calculation
         # (200 SMA needs 200 bars, so first 200 rows will have NaN)
-        valid_rows = result_df[['sma_50', 'sma_200', 'atr_20_pct', 'adx_14']].dropna()
+        valid_rows = result_df[['sma_fast', 'sma_slow', 'atr_pct', 'adx']].dropna()
         
         if len(valid_rows) < MIN_VALID_INDICATORS:
             raise ValueError(
@@ -516,9 +511,9 @@ def calculate_indicators_for_symbol(
         df_with_indicators = calculator.calculate_all_indicators(df, as_of_date)
         
         # Count valid indicator rows
-        valid_indicators = df_with_indicators[['sma_50', 'sma_200', 'atr_20_pct', 'adx_14']].dropna()
+        valid_indicators = df_with_indicators[['sma_fast', 'sma_slow', 'atr_pct', 'adx']].dropna()
         result.records_valid = len(valid_indicators)
-        result.indicators_calculated = ['sma_50', 'sma_200', 'atr_20_pct', 'adx_14']
+        result.indicators_calculated = ['sma_fast', 'sma_slow', 'atr_pct', 'adx']
         
         # Save to parquet
         INDICATORS_DIR.mkdir(parents=True, exist_ok=True)

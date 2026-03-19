@@ -1,65 +1,158 @@
 {
+  "_meta": {
+    "version": "3.8",
+    "last_updated": "2026-03-18",
+    "description": "Single source of truth for all strategy, backtest, and optimizer parameters. Edit this file only. Never hardcode values in scripts.",
+    "architecture_ref": "Multi-Asset Trend Following Strategy v3.8 (Mar 2026)"
+  },
+
   "indicators": {
-    "sma_fast": 50,
-    "sma_slow": 200,
+    "_comment": "Technical indicator periods. sma_fast/sma_slow drive compute_indicators() in Script 16/17. atr_period drives stop-loss sizing in Scripts 8/16. adx_period is fixed at 14 (Wilder standard).",
+    "sma_fast": 100,
+    "sma_slow": 250,
     "atr_period": 20,
-    "adx_period": 14,
-    "adx_smoothing": 14
+    "adx_period": 14
   },
-  "entry": {
-    "timing": "monthly_rebalancing_date",
-    "order_type": "limit",
-    "limit_offset_pct": 0.5,
-    "trend_qualification": {
-      "sma_50_above_sma_200": true,
-      "close_above_sma_50": true,
-      "adx_minimum": 20,
-      "price_above_sma_200": true
-    },
-    "momentum_ranking": {
-      "lookback_period": 60,
-      "method": "rate_of_change",
-      "top_n_symbols": 20
-    }
+
+  "trend_qualification": {
+    "_comment": "Three-condition trend filter (Script 6). All three must be TRUE simultaneously. adx_threshold = entry gate. adx_weak = exit trigger (must be < adx_threshold). adx_weakness_days = consecutive days below adx_weak before exit.",
+    "adx_threshold": 20,
+    "adx_weak": 10,
+    "adx_weakness_days": 3,
+    "min_history_days": 252,
+    "min_valid_indicators": 20,
+    "min_data_points": 250
   },
-  "position_sizing": {
-    "target_risk_per_position": 0.02,
-    "min_position_pct": 0.005,
-    "max_position_pct": 0.08,
-    "max_portfolio_positions": 20,
-    "share_rounding": "floor"
+
+  "momentum": {
+    "_comment": "Momentum scoring formula: Score = ((Close - SMA_slow) / SMA_slow) * 100. sma_period must match indicators.sma_slow. ROC periods are supplementary (stored, not used for ranking).",
+    "sma_period": 250,
+    "roc_periods": [20, 60, 120]
   },
+
   "stops": {
-    "initial_stop_multiplier": 3.0,
-    "trailing_stop_multiplier": 4.0,
-    "trailing_activation_profit_pct": 0.15,
-    "update_frequency": "weekly_friday",
-    "use_ratchet": true
+    "_comment": "ATR-based stop-loss system (Scripts 8/16). init_stop_mult: set once at entry, never lowered. trail_stop_mult: activates after trail_activation profit. Trailing updates Fridays only, ratchets up only.",
+    "init_stop_mult": 2.5,
+    "trail_stop_mult": 3.5,
+    "trail_activation": 0.08,
+    "max_stop_distance_pct": 0.40
   },
-  "rebalancing": {
-    "frequency": "monthly",
-    "anchor": "last_trading_day",
-    "execution": "first_trading_day_next_month",
-    "holiday_calendar": "NYSE"
+
+  "position_sizing": {
+    "_comment": "Inverse-ATR volatility-scaled sizing (Scripts 9/16). risk_per_trade = fraction of equity at risk per position. Floor/ceiling clip prevents outsized or negligible positions.",
+    "risk_per_trade": 0.02,
+    "pos_floor_pct": 0.005,
+    "pos_ceil_pct": 0.08,
+    "entry_limit_offset": 0.005,
+    "limit_cancel_days": 2,
+    "position_count_schedule": [
+      { "equity_gte": 0,       "max_positions": 10 },
+      { "equity_gte": 25000,   "max_positions": 15 },
+      { "equity_gte": 50000,   "max_positions": 20 },
+      { "equity_gte": 100000,  "max_positions": 40 }
+    ]
   },
-  "risk_management": {
-    "max_portfolio_risk": 0.3,
-    "max_sector_exposure": 0.4,
-    "max_correlation": 0.85,
-    "max_concentration_top3": 0.3
+
+  "portfolio_constraints": {
+    "_comment": "Hard and soft allocation limits (Scripts 9/11/14). max_crypto_pct is a hard cap. Sector and concentration limits are warnings that halt new entries. correlation_lookback_days is used for pairwise correlation check.",
+    "max_crypto_pct": 0.20,
+    "max_sector_pct": 0.30,
+    "min_cash_pct": 0.05,
+    "max_top3_concentration_pct": 0.30,
+    "max_single_position_pct": 0.10,
+    "max_pairwise_correlation": 0.85,
+    "correlation_lookback_days": 60
   },
+
+  "execution": {
+    "_comment": "Transaction cost model (Script 16). cost_bps = round-trip basis points (10 bps = 0.10% per side). Slippage applied at fill simulation.",
+    "slippage_stock": 0.0005,
+    "slippage_crypto": 0.0010,
+    "cost_bps": 10
+  },
+
   "circuit_breakers": {
-    "max_drawdown_pct": -15.0,
-    "max_vix": 40,
-    "max_correlation": 0.85,
-    "max_concentration_top3_pct": 30.0,
-    "max_data_staleness_days": 3,
-    "action": "halt_new_positions"
+    "_comment": "Automated halt conditions (Scripts 11/14/16). cb_drawdown_halt triggers full entry suspension with cb_min_halt_days minimum pause. cb_drawdown_warn and cb_drawdown_watch are monitoring thresholds only. VIX resume requires cb_vix_resume_days consecutive days below cb_vix_resume.",
+    "cb_drawdown_halt": -0.30,
+    "cb_drawdown_warn": -0.15,
+    "cb_drawdown_watch": -0.10,
+    "cb_recovery_pct": 0.05,
+    "cb_min_halt_days": 30,
+    "cb_vix_enter": 40,
+    "cb_vix_resume": 30,
+    "cb_vix_resume_days": 3,
+    "cb_data_staleness_days": 3,
+    "stop_proximity_high_pct": 0.03,
+    "stop_proximity_medium_pct": 0.05
   },
-  "data_validation": {
-    "max_missing_data_days": 5,
-    "max_price_spike_pct": 50.0,
-    "min_non_zero_prices_pct": 95.0,
-    "max_zero_volume_days": 10
+
+  "backtesting": {
+    "_comment": "Backtest engine defaults (Script 16). initial_equity is the default starting capital; always overridable via CLI. risk_free_rate used for Sharpe/Sortino. benchmark_symbol used for relative performance comparison.",
+    "initial_equity": 50000,
+    "risk_free_rate": 0.05,
+    "trading_days_per_year": 252,
+    "benchmark_symbol": "SPY.US"
+  },
+
+  "walk_forward": {
+    "_comment": "WFO window geometry (Script 17). is_months = in-sample optimization window. oos_months = out-of-sample validation window (12m prevents single-regime dominance). roll_months = step size between windows.",
+    "is_months": 24,
+    "oos_months": 12,
+    "roll_months": 6,
+    "stability_excellent": 0.80,
+    "stability_good": 0.70,
+    "stability_acceptable": 0.60,
+    "oos_consistency_pass": 0.70,
+    "oos_consistency_warn": 0.60,
+    "param_cv_excellent": 0.10,
+    "param_cv_good": 0.20
+  },
+
+  "optimization_grid": {
+    "_comment": "Full WFO parameter search space (Script 17). Only include parameters whose variation meaningfully changes strategy behaviour. Fixed params (sma_fast, adx_threshold, risk_per_trade) are in fixed_params below. Grid must never have all values at one edge — expand if optimizer converges to boundary.",
+    "sma_slow":       [200, 250, 300],
+    "init_stop_mult": [2.0, 2.5, 3.0, 3.5],
+    "trail_stop_mult":[3.0, 3.5, 4.0, 4.5],
+    "max_positions":  [30, 35, 40, 45]
+  },
+
+  "optimization_grid_fast": {
+    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on current optimal values.",
+    "sma_slow":       [200, 250, 300],
+    "trail_stop_mult":[3.5, 4.0, 4.5],
+    "max_positions":  [20, 25]
+  },
+
+  "fixed_params": {
+    "_comment": "Parameters excluded from WFO grid. sma_fast CV=0.374 (too unstable to optimize). adx_threshold=15 (expanded from 20 — WFO converged to lower boundary). risk_per_trade, trail_activation, cost_bps are strategy-design constants.",
+    "sma_fast": 100,
+    "adx_threshold": 15,
+    "init_stop_mult": 2.5,
+    "trail_activation": 0.08,
+    "risk_per_trade": 0.02,
+    "pos_floor_pct": 0.005,
+    "pos_ceil_pct": 0.08,
+    "cost_bps": 10
+  },
+
+  "monte_carlo": {
+    "_comment": "Simulation parameters (Script 18). All three methods must pass gates before live deployment.",
+    "n_paths": 10000,
+    "n_paths_fast": 2000,
+    "block_length": 21,
+    "risk_free_rate": 0.05,
+    "trading_days_per_year": 252,
+    "soft_ruin_level": 0.50,
+    "hard_dd_limit": 0.40,
+    "seed": 42,
+    "report_percentiles": [1, 5, 10, 25, 50, 75, 90, 95, 99],
+    "gates": {
+      "mc1_median_cagr_min": 0.00,
+      "mc2_p5_equity_pct_min": 0.50,
+      "mc3_p95_maxdd_max": 0.50,
+      "mc4_median_sharpe_min": 0.30,
+      "mc5_ruin_prob_max": 0.05,
+      "mc6_m3_ruin_prob_max": 0.10
+    }
   }
 }

@@ -141,17 +141,18 @@ REPORTS_DIR      = PROJECT_ROOT / "reports" / "rebalancing"
 LOG_DIR          = PROJECT_ROOT / "logs"
 CONFIG_DIR       = PROJECT_ROOT / "config"
 
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
 # ============================================================================
 # STRATEGY CONSTANTS  (match architecture v3.2 â€“ do NOT change without review)
 # ============================================================================
 
-# Position count thresholds by account size (EUR)
-POSITION_COUNT_SCHEDULE: List[Tuple[float, int]] = [
-    (25_000,  10),
-    (50_000,  15),
-    (100_000, 20),
-    (float("inf"), 25),
-]
+# Position count — use P.position_sizing.max_positions_for_equity(equity).
 
 # Asset class allocation targets (by portfolio value %)
 ASSET_CLASS_TARGETS = {
@@ -163,14 +164,13 @@ ASSET_CLASS_TARGETS = {
 # Tolerance for target deviation before rebalancing (percentage points)
 ALLOCATION_TOLERANCE = 10.0  # e.g., 38% target Â± 10pp = 28-48% acceptable range
 
-# Circuit-breaker thresholds
-CB_MAX_DRAWDOWN_PCT      = -0.15   # âˆ’15%
-CB_VIX_HALT_LEVEL        = 40.0
-CB_VIX_RESUME_LEVEL      = 30.0
-CB_MAX_CORRELATION       = 0.85
-CB_MAX_TOP3_CONCENTRATION = 0.30   # 30%
-CB_MAX_DATA_STALENESS_DAYS = 3
-
+# Circuit-breaker constants — sourced from config/strategy_parameters.json.
+CB_MAX_DRAWDOWN_PCT        = P.circuit_breakers.cb_drawdown_warn
+CB_VIX_HALT_LEVEL          = P.circuit_breakers.cb_vix_enter
+CB_VIX_RESUME_LEVEL        = P.circuit_breakers.cb_vix_resume
+CB_MAX_CORRELATION         = P.portfolio_constraints.max_pairwise_correlation
+CB_MAX_TOP3_CONCENTRATION  = P.portfolio_constraints.max_top3_concentration_pct
+CB_MAX_DATA_STALENESS_DAYS = P.circuit_breakers.cb_data_staleness_days
 # Exit priority thresholds
 MANDATORY_EXIT_PRIORITIES = {1, 2, 3}   # stop-loss, reversal, weakness
 ROTATION_EXIT_PRIORITY    = 4
@@ -326,18 +326,13 @@ def validate_rebalance_date(rebalance_date_str: str) -> date:
 
 def get_max_positions(account_equity: float) -> int:
     """
-    Determine maximum number of simultaneous positions based on account size.
+    Return the maximum number of simultaneous positions allowed for an
+    account of the given equity size.
 
-    Scale:
-        < â‚¬25 000  â†’ 10 positions
-        < â‚¬50 000  â†’ 15 positions
-        < â‚¬100 000 â†’ 20 positions
-        â‰¥ â‚¬100 000 â†’ 25 positions
+    Schedule is defined in config/strategy_parameters.json under
+    position_sizing.position_count_schedule and loaded via P.
     """
-    for threshold, count in POSITION_COUNT_SCHEDULE:
-        if account_equity < threshold:
-            return count
-    return POSITION_COUNT_SCHEDULE[-1][1]
+    return P.position_sizing.max_positions_for_equity(account_equity)
 
 
 # ============================================================================
@@ -359,11 +354,11 @@ def load_portfolio_state() -> Dict:
                 "unrealized_pnl_pct":    6.67,
                 "current_stop_price":    135.0,
                 "initial_stop_price":    135.0,
-                "trailing_stop_price":   null,
+                "trailing_stop_price":   None,
                 "stop_type":             "initial",
                 "stop_last_update_date": "2025-12-29",
                 "data_last_update":      "2026-01-31T00:00:00",
-                "is_new_entry":          false
+                "is_new_entry":          False
             },
             ...
         }
@@ -373,7 +368,7 @@ def load_portfolio_state() -> Dict:
     state_file = DATA_DIR / "portfolio_state.json"
 
     if not state_file.exists():
-        logger.info("No portfolio_state.json found â€” assuming empty portfolio (first run).")
+        logger.info("No portfolio_state.json found — assuming empty portfolio (first run).")
         return {}
 
     try:
@@ -383,18 +378,18 @@ def load_portfolio_state() -> Dict:
         logger.error(f"Failed to load portfolio state: {exc}")
         sys.exit(1)
 
-    # â”€â”€ Normalise: accept several portfolio_state.json layouts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Normalise: accept several portfolio_state.json layouts
     #
-    # Layout A (canonical â€“ dict of symbol â†’ position dict):
+    # Layout A (canonical — dict of symbol -> position dict):
     #   { "AAPL.US": { "entry_price": ..., "shares": ... }, ... }
     #
     # Layout B (nested under a "positions" key):
     #   { "positions": { "AAPL.US": { ... } }, "_meta": { ... } }
     #
-    # Layout C (flat list of symbols â€“ minimal state, no details):
+    # Layout C (flat list of symbols — minimal state, no details):
     #   { "AAPL.US": "active", "MSFT.US": "active", ... }
     #
-    # In all cases we return a dict of  symbol â†’ dict  (possibly empty dict
+    # In all cases we return a dict of  symbol -> dict  (possibly empty dict
     # for entries that carry no detail).
 
     if not isinstance(raw, dict):
@@ -423,7 +418,7 @@ def load_portfolio_state() -> Dict:
         if isinstance(value, dict):
             normalised[key] = value
         else:
-            # Value is a string/number (e.g. "active", 1) â€” treat as a
+            # Value is a string/number (e.g. "active", 1) — treat as a
             # minimal position record with no detail fields.
             normalised[key] = {}
             coerced_flat += 1
@@ -1451,7 +1446,7 @@ def _load_indicators_from_parquet(symbol: str, as_of_date: str) -> Dict:
 
     Lookup order:
       1. Indicator parquet (data_cache/indicators/{symbol}_indicators.parquet)
-         Written by Script 05; has pre-computed adx_14 and atr_20_pct.
+         Written by Script 05; has pre-computed adx and atr_pct.
       2. Consolidated parquet (data_cache/consolidated/{symbol}.parquet)
          Written by Script 03; has raw OHLCV. ATR is computed on-the-fly;
          ADX is left as None (requires full DI calculation, not worthwhile here).
@@ -1464,15 +1459,15 @@ def _load_indicators_from_parquet(symbol: str, as_of_date: str) -> Dict:
     ind_file = INDICATORS_DIR / f"{symbol}_indicators.parquet"
     if ind_file.exists():
         try:
-            # Include sma_200 so we can recompute the same momentum score formula
-            # used by Script 07: momentum_score = ((close - sma_200) / sma_200) * 100
-            df = pd.read_parquet(ind_file, columns=["close", "sma_200", "adx_14", "atr_20_pct"])
+            # Include sma_slow so we can recompute the same momentum score formula
+            # used by Script 07: momentum_score = ((close - sma_slow) / sma_slow) * 100
+            df = pd.read_parquet(ind_file, columns=["close", "sma_slow", "adx", "atr_pct"])
             df.index = pd.to_datetime(df.index)
             df = df[df.index <= as_of_dt]
             if not df.empty:
                 last = df.iloc[-1]
                 close_val  = last.get("close")
-                sma200_val = last.get("sma_200")
+                sma200_val = last.get("sma_slow")
                 # Recompute momentum_score using Script 07's primary formula
                 if (close_val is not None and not pd.isna(close_val) and
                         sma200_val is not None and not pd.isna(sma200_val) and
@@ -1483,8 +1478,8 @@ def _load_indicators_from_parquet(symbol: str, as_of_date: str) -> Dict:
                 else:
                     momentum_score = None
                 return {
-                    "adx_14":         None if pd.isna(last.get("adx_14"))     else float(last["adx_14"]),
-                    "atr_20_pct":     None if pd.isna(last.get("atr_20_pct")) else float(last["atr_20_pct"]),
+                    "adx":         None if pd.isna(last.get("adx"))     else float(last["adx"]),
+                    "atr_pct":     None if pd.isna(last.get("atr_pct")) else float(last["atr_pct"]),
                     "momentum_score": momentum_score,
                     "close":          None if (close_val is None or pd.isna(close_val)) else float(close_val),
                 }
@@ -1510,8 +1505,8 @@ def _load_indicators_from_parquet(symbol: str, as_of_date: str) -> Dict:
                 close  = df["close"].iloc[-1]
                 if close > 0 and not pd.isna(atr_20):
                     return {
-                        "adx_14":         None,   # Not computable from OHLCV without full DI series
-                        "atr_20_pct":     round(float(atr_20 / close * 100), 4),
+                        "adx":         None,   # Not computable from OHLCV without full DI series
+                        "atr_pct":     round(float(atr_20 / close * 100), 4),
                         "momentum_score": None,
                         "close":          round(float(close), 4),
                     }
@@ -1540,7 +1535,7 @@ def identify_rotation_exits(
 
     Args:
         ranked_universe:  Full momentum-ranked list; used to enrich exit records
-                          with current momentum_score, adx_14, and atr_20_pct.
+                          with current momentum_score, adx, and atr_pct.
         rebalance_date:   ISO date string (YYYY-MM-DD); used as the as-of date
                           when falling back to per-symbol parquet files for
                           symbols that have dropped out of the qualified universe.
@@ -1620,8 +1615,8 @@ def identify_rotation_exits(
             "current_stop":    position.get("current_stop_price"),
             # Current technical indicators (ranked universe or parquet fallback)
             "momentum_score":  ind.get("momentum_score"),
-            "adx_14":          ind.get("adx_14"),
-            "atr_20_pct":      ind.get("atr_20_pct"),
+            "adx":          ind.get("adx"),
+            "atr_pct":      ind.get("atr_pct"),
         })
 
     return rotation_exits
@@ -1688,15 +1683,15 @@ def identify_new_entries(
             "limit_price":     sizing.get("limit_price"),
             "position_value_eur": sizing.get("position_value_eur"),
             "position_pct":    sizing.get("position_pct"),
-            "atr_20_pct":      sizing.get("atr_20_pct"),
+            "atr_pct":      sizing.get("atr_pct"),
             # Stop levels (from Script 09)
             "initial_stop":    stop.get("stop_price"),
             "stop_type":       stop.get("type", "initial"),
             "stop_distance_pct": stop.get("stop_distance_pct"),
             # Technical context
-            "sma_50":          sizing.get("sma_50"),
-            "sma_200":         sizing.get("sma_200"),
-            "adx_14":          sizing.get("adx_14"),
+            "sma_fast":          sizing.get("sma_fast"),
+            "sma_slow":         sizing.get("sma_slow"),
+            "adx":          sizing.get("adx"),
             # Order instruction
             "order_type":      ORDER_NEW_ENTRY,
             "order_note":      "Place limit order at limit_price on execution day (first trading day of next month).",
@@ -2329,9 +2324,9 @@ def build_ranked_candidates_export(
 
         # ── Fallback stop: estimated from 2x ATR when Script 08 data is absent ──────
         # This mirrors the conservative default used by Script 08 (initial stop = 2 * ATR below entry).
-        if stop_price is None and entry_price and rank_entry.get("atr_20_pct"):
+        if stop_price is None and entry_price and rank_entry.get("atr_pct"):
             try:
-                atr_pct = float(rank_entry["atr_20_pct"])
+                atr_pct = float(rank_entry["atr_pct"])
                 if atr_pct > 0:
                     stop_price       = round(float(entry_price) * (1.0 - 2.0 * atr_pct / 100.0), 4)
                     stop_dst         = round(2.0 * atr_pct, 2)
@@ -2364,11 +2359,11 @@ def build_ranked_candidates_export(
             "rank":            rank_entry.get("rank"),
             "momentum_score":  rank_entry.get("momentum_score"),
             # Technical indicators
-            "adx_14":          rank_entry.get("adx_14"),
-            "atr_20_pct":      rank_entry.get("atr_20_pct"),
+            "adx":          rank_entry.get("adx"),
+            "atr_pct":      rank_entry.get("atr_pct"),
             "close":           rank_entry.get("close"),
-            "sma_50":          rank_entry.get("sma_50"),
-            "sma_200":         rank_entry.get("sma_200"),
+            "sma_fast":          rank_entry.get("sma_fast"),
+            "sma_slow":         rank_entry.get("sma_slow"),
             # Return metrics (percentage)
             "return_1m":       _to_pct(roc_20d),
             "return_3m":       _to_pct(roc_60d),

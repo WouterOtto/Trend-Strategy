@@ -118,44 +118,21 @@ BACKTEST_DIR     = DATA_CACHE_DIR / "backtest"
 REPORTS_DIR      = PROJECT_ROOT / "reports" / "backtest"
 LOG_DIR          = PROJECT_ROOT / "logs"
 
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
 # ============================================================================
 # DEFAULT STRATEGY PARAMETERS  (Architecture v3.2 production values)
 # ============================================================================
 
-DEFAULTS = dict(
-    # Trend qualification
-    sma_fast           = 100,
-    sma_slow           = 250,
-    adx_threshold      = 20,
-    adx_weak           = 10,    # must be < adx_threshold; was 15 (logical conflict)
-    adx_weakness_days  = 3,
-    # Momentum
-    momentum_period    = 200,
-    # Stops
-    init_stop_mult     = 2.5,   # was 3.0 — WFO converged CV=0.000
-    trail_stop_mult    = 3.5,   # was 4.0 — WFO mean=3.462
-    trail_activation   = 0.08,
-    # Sizing
-    max_positions      = 40,    # was 20 — WFO mean=38
-    risk_per_trade     = 0.02,
-    pos_floor_pct      = 0.005,
-    pos_ceil_pct       = 0.08,
-    # Execution
-    limit_slip         = 0.005,
-    limit_cancel_days  = 2,
-    slippage_stock     = 0.0005,
-    slippage_crypto    = 0.001,
-    cost_bps           = 10,
-    # Capital
-    initial_equity     = 50_000.0,
-    # Circuit breakers
-    cb_drawdown        = -0.30,
-    cb_recovery_pct    = 0.05,
-    cb_min_halt_days   = 30,
-    cb_vix_enter       = 40,
-    cb_vix_resume      = 30,
-    cb_vix_resume_days = 3,
-)
+# DEFAULTS sourced from config/strategy_parameters.json via P.
+# Kept as a flat dict for backward compatibility with Script 17's
+#   `from backtest_engine_16 import DEFAULTS` import pattern.
+DEFAULTS = P.as_backtest_defaults()
 
 # ============================================================================
 # LOGGING
@@ -354,7 +331,7 @@ def compute_indicators(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
     df["sma_fast"]  = _sma(df["close"], params["sma_fast"])
     df["sma_slow"]  = _sma(df["close"], params["sma_slow"])
     df["atr_20"]    = _atr(df, period=20)
-    df["adx_14"]    = _adx(df, period=14)
+    df["adx"]    = _adx(df, period=14)
     df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
     df["atr_pct"]   = df["atr_20"] / df["close"]
     # FIX-2: 20-day rolling high used by is_entry_confirmed() to gate entries near strength
@@ -373,13 +350,13 @@ def is_trend_qualified(row: pd.Series, params: Dict) -> bool:
       2. Close    > SMA_fast  (price above short-term trend)
       3. ADX_14   > threshold (sufficient trend strength)
     """
-    for col in ["sma_fast", "sma_slow", "adx_14", "close"]:
+    for col in ["sma_fast", "sma_slow", "adx", "close"]:
         if pd.isna(row.get(col)):
             return False
     return (
         float(row["sma_fast"])  > float(row["sma_slow"])
         and float(row["close"]) > float(row["sma_fast"])
-        and float(row["adx_14"]) > params["adx_threshold"]
+        and float(row["adx"]) > params["adx_threshold"]
     )
 
 
@@ -420,9 +397,9 @@ def is_entry_confirmed(
     recent = ind_history.tail(adx_confirm_days)
     if len(recent) < adx_confirm_days:
         return False   # not enough history for confirmation
-    if "adx_14" not in recent.columns or recent["adx_14"].isna().any():
+    if "adx" not in recent.columns or recent["adx"].isna().any():
         return False
-    if (recent["adx_14"] <= threshold).any():
+    if (recent["adx"] <= threshold).any():
         return False   # ADX dipped below threshold within confirmation window
 
     # Condition 3: close within X% of 20-day high (entering near strength)
@@ -713,7 +690,7 @@ class BacktestEngine:
                 "symbol":      sym,
                 "close":       row["close"],
                 "atr_20":      row.get("atr_20", np.nan),
-                "adx_14":      row.get("adx_14", np.nan),
+                "adx":      row.get("adx", np.nan),
                 "momentum":    row.get("momentum", np.nan),
                 "sma_fast":    row.get("sma_fast", np.nan),
                 "sma_slow":    row.get("sma_slow", np.nan),
@@ -792,7 +769,7 @@ class BacktestEngine:
             today_ind = ind_sub.iloc[-1]
             close     = float(today_px["close"])
             atr_val   = float(today_ind.get("atr_20", pos.entry_atr))
-            adx_val   = float(today_ind.get("adx_14", 99))
+            adx_val   = float(today_ind.get("adx", 99))
 
             # Update trailing stop (Fridays only, ratchet up)
             pos.update_trailing_stop(

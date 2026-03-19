@@ -450,28 +450,28 @@ def load_company_info() -> dict:
 
 def load_latest_sma200(symbol: str, as_of: date) -> Optional[float]:
     """
-    Return the most recent sma_200 value for a symbol from the indicators parquet.
+    Return the most recent sma_slow value for a symbol from the indicators parquet.
 
     Script 05 writes: data_cache/indicators/{symbol}_indicators.parquet
-    with columns including sma_200 (indexed by date, same as consolidated/).
+    with columns including sma_slow (indexed by date, same as consolidated/).
 
-    Returns None if the indicators file is unavailable or sma_200 is NaN.
+    Returns None if the indicators file is unavailable or sma_slow is NaN.
     """
     ind_path = INDICATORS_DIR / f"{symbol}_indicators.parquet"
     if not ind_path.exists():
         return None
     try:
-        df = pd.read_parquet(ind_path, columns=["sma_200"])
+        df = pd.read_parquet(ind_path, columns=["sma_slow"])
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
         df.index = df.index.date
         df = df[df.index <= as_of].sort_index()
         if df.empty:
             return None
-        val = df["sma_200"].dropna()
+        val = df["sma_slow"].dropna()
         return float(val.iloc[-1]) if not val.empty else None
     except Exception as exc:
-        logger.debug("  Could not load sma_200 for %s: %s", symbol, exc)
+        logger.debug("  Could not load sma_slow for %s: %s", symbol, exc)
         return None
 
 
@@ -1037,7 +1037,7 @@ def compute_factor_exposures(
         # --- Momentum ---
         # Priority 1: portfolio_state has pre-computed momentum_score (Script 07)
         # Priority 2: compute from current_price and sma200 field in portfolio_state
-        # Priority 3: look up sma_200 from indicators parquet (Script 05 output)
+        # Priority 3: look up sma_slow from indicators parquet (Script 05 output)
         mom_score = pos.get("momentum_score", None)
         if mom_score is not None:
             momentum_weighted += w * float(mom_score)
@@ -1045,7 +1045,7 @@ def compute_factor_exposures(
         else:
             current_price = pos.get("current_price", 0.0)
             # Try portfolio_state sma200 field first
-            sma200 = pos.get("sma200", 0.0) or pos.get("sma_200", 0.0)
+            sma200 = pos.get("sma200", 0.0) or pos.get("sma_slow", 0.0)
             # Fallback: read from indicators parquet
             if (sma200 == 0.0 or sma200 is None) and as_of is not None:
                 sma200 = load_latest_sma200(sym, as_of) or 0.0

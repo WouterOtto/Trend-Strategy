@@ -121,23 +121,26 @@ REPORTS_DIR    = PROJECT_ROOT / "reports" / "signals"
 CONFIG_DIR     = PROJECT_ROOT / "config"
 LOG_DIR        = PROJECT_ROOT / "logs"
 
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2 / strategy_parameters.json)
 # ============================================================================
 
 # Exit Rule 1 â Stop-loss: no configurable parameters; uses stop_levels.json directly.
 
-# Exit Rule 2 â Trend reversal: SMA death cross
-SMA_FAST_PERIOD: int = 50    # SMA_50
-SMA_SLOW_PERIOD: int = 200   # SMA_200
-
-# Exit Rule 3 â Trend weakness: ADX collapse
-ADX_PERIOD: int         = 14   # ADX_14
-ADX_WEAKNESS_THRESHOLD: float = 15.0   # Exit if ADX < this
-ADX_CONSECUTIVE_DAYS: int     = 3      # ...for this many consecutive bars
-
-# Data freshness guard
-MAX_DATA_STALENESS_DAYS: int = 3   # Warn and suppress trend checks if stale
+# Exit signal constants — sourced from config/strategy_parameters.json.
+SMA_FAST_PERIOD:         int   = P.indicators.sma_fast
+SMA_SLOW_PERIOD:         int   = P.indicators.sma_slow
+ADX_PERIOD:              int   = P.indicators.adx_period
+ADX_WEAKNESS_THRESHOLD:  float = P.trend_qualification.adx_weak
+ADX_CONSECUTIVE_DAYS:    int   = P.trend_qualification.adx_weakness_days
+MAX_DATA_STALENESS_DAYS: int   = P.circuit_breakers.cb_data_staleness_days
 
 # ============================================================================
 # LOGGING
@@ -344,7 +347,7 @@ def load_indicators(symbol: str, as_of_date: str) -> Optional[pd.DataFrame]:
     File: data_cache/indicators/{symbol}_indicators.parquet
 
     Required columns (set by Script 5):
-        close, sma_50, sma_200, adx_14
+        close, sma_fast, sma_slow, adx
 
     Returns:
         Filtered DataFrame, or None if the file is missing or no rows match.
@@ -782,8 +785,8 @@ def evaluate_position_exits(
 
     # ââ RULE 2: Trend reversal (death cross) ââââââââââââââââââââââââââââââ
     if df is not None and not df.empty and not data_is_stale:
-        sma_col_fast = "sma_50"
-        sma_col_slow = "sma_200"
+        sma_col_fast = "sma_fast"
+        sma_col_slow = "sma_slow"
 
         has_sma = (sma_col_fast in df.columns) and (sma_col_slow in df.columns)
 
@@ -820,7 +823,7 @@ def evaluate_position_exits(
 
     # ââ RULE 3: Trend weakness (ADX collapse) âââââââââââââââââââââââââââââ
     if df is not None and not df.empty and not data_is_stale:
-        adx_col = "adx_14"
+        adx_col = "adx"
 
         if adx_col in df.columns:
             adx_series = df[adx_col].dropna()

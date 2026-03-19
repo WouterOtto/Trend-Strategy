@@ -107,32 +107,32 @@ REPORTS_DIR    = PROJECT_ROOT / "reports" / "daily"
 LOG_DIR        = PROJECT_ROOT / "logs"
 CONFIG_DIR     = PROJECT_ROOT / "config"
 
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
+
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2)
 # ============================================================================
 
-# Circuit-breaker thresholds
-CB_MAX_DRAWDOWN_CRITICAL    = -0.15   # â15% → HIGH circuit breaker alert
-CB_MAX_DRAWDOWN_WARNING     = -0.10   # â10% → MEDIUM warning
-CB_MAX_TOP3_CONCENTRATION   = 0.30    # 30% of equity in top-3 positions
-CB_MAX_SINGLE_POSITION_PCT  = 0.10    # 10% of equity in a single position
-CB_MAX_PAIRWISE_CORRELATION = 0.85    # Max pairwise correlation (top-10)
-CB_MAX_DATA_STALENESS_DAYS  = 3       # Calendar days before data is CRITICAL stale
-CB_VIX_HALT_LEVEL           = 40.0    # VIX: halt all entries
-CB_VIX_WARN_LEVEL           = 30.0    # VIX: elevated risk warning
-
-# Stop-loss proximity thresholds
-STOP_PROXIMITY_HIGH_PCT    = 0.03   # Within 3% of stop → HIGH alert
-STOP_PROXIMITY_MEDIUM_PCT  = 0.05   # Within 5% of stop → MEDIUM warning
-
-# Trend quality thresholds
-ADX_WEAKNESS_EXIT      = 15.0   # ADX below this triggers exit (Script 10)
-ADX_DETERIORATION_WARN = 20.0   # ADX below this → MEDIUM warning
-ADX_CONSECUTIVE_DAYS   = 3      # Days of ADX weakness before MEDIUM alert
-
-# Correlation lookback (trading days)
-CORRELATION_LOOKBACK_DAYS = 60
-
+# Monitoring constants — sourced from config/strategy_parameters.json.
+CB_MAX_DRAWDOWN_CRITICAL    = P.circuit_breakers.cb_drawdown_warn
+CB_MAX_DRAWDOWN_WARNING     = P.circuit_breakers.cb_drawdown_watch
+CB_MAX_TOP3_CONCENTRATION   = P.portfolio_constraints.max_top3_concentration_pct
+CB_MAX_SINGLE_POSITION_PCT  = P.portfolio_constraints.max_single_position_pct
+CB_MAX_PAIRWISE_CORRELATION = P.portfolio_constraints.max_pairwise_correlation
+CB_MAX_DATA_STALENESS_DAYS  = P.circuit_breakers.cb_data_staleness_days
+CB_VIX_HALT_LEVEL           = P.circuit_breakers.cb_vix_enter
+CB_VIX_WARN_LEVEL           = P.circuit_breakers.cb_vix_resume
+STOP_PROXIMITY_HIGH_PCT     = P.circuit_breakers.stop_proximity_high_pct
+STOP_PROXIMITY_MEDIUM_PCT   = P.circuit_breakers.stop_proximity_medium_pct
+ADX_WEAKNESS_EXIT           = P.trend_qualification.adx_weak
+ADX_DETERIORATION_WARN      = P.trend_qualification.adx_threshold
+ADX_CONSECUTIVE_DAYS        = P.trend_qualification.adx_weakness_days
+CORRELATION_LOOKBACK_DAYS   = P.portfolio_constraints.correlation_lookback_days
 # ============================================================================
 # LOGGING
 # ============================================================================
@@ -395,10 +395,10 @@ def load_latest_indicators(symbol: str, as_of_date: str) -> Optional[pd.DataFram
     File: data_cache/indicators/{symbol}_indicators.parquet
 
     Required columns (Script 05 output):
-        close, sma_50, sma_200, adx_14
+        close, sma_fast, sma_slow, adx
 
     Optional columns (used if present):
-        atr_20, atr_20_pct, volume
+        atr_20, atr_pct, volume
 
     Returns:
         Filtered DataFrame sorted ascending by date, or None if unavailable.
@@ -923,8 +923,8 @@ def check_trend_signals(
             continue
 
         # â 7a: Death Cross âââââââââââââââââââââââââââââââââââââââââââââââââââ
-        sma50  = ind.get("sma_50")
-        sma200 = ind.get("sma_200")
+        sma50  = ind.get("sma_fast")
+        sma200 = ind.get("sma_slow")
 
         if sma50 is not None and sma200 is not None:
             if sma50 < sma200:
@@ -932,8 +932,8 @@ def check_trend_signals(
                     "check":     "trend_reversal_death_cross",
                     "severity":  "HIGH",
                     "symbol":    symbol,
-                    "sma_50":    round(sma50, 4),
-                    "sma_200":   round(sma200, 4),
+                    "sma_fast":    round(sma50, 4),
+                    "sma_slow":   round(sma200, 4),
                     "detail":    (
                         f"{symbol} SMA-50 ({sma50:.2f}) crossed below SMA-200 ({sma200:.2f}) "
                         "â death cross detected. Primary uptrend lost. "
@@ -943,8 +943,8 @@ def check_trend_signals(
                 })
 
         # â 7b: ADX Weakness ââââââââââââââââââââââââââââââââââââââââââââââââââ
-        if "adx_14" in df_full.columns and len(df_full) >= adx_consecutive_days:
-            recent_adx = df_full["adx_14"].dropna().tail(adx_consecutive_days)
+        if "adx" in df_full.columns and len(df_full) >= adx_consecutive_days:
+            recent_adx = df_full["adx"].dropna().tail(adx_consecutive_days)
 
             if len(recent_adx) == adx_consecutive_days:
                 if (recent_adx < adx_weakness_threshold).all():
@@ -953,7 +953,7 @@ def check_trend_signals(
                         "check":            "trend_weakness_adx",
                         "severity":         "MEDIUM",
                         "symbol":           symbol,
-                        "adx_14":           round(current_adx, 2),
+                        "adx":           round(current_adx, 2),
                         "consecutive_days": adx_consecutive_days,
                         "threshold":        adx_weakness_threshold,
                         "detail":           (
@@ -971,7 +971,7 @@ def check_trend_signals(
                         "check":            "trend_deterioration_warning",
                         "severity":         "LOW",
                         "symbol":           symbol,
-                        "adx_14":           round(current_adx, 2),
+                        "adx":           round(current_adx, 2),
                         "consecutive_days": adx_consecutive_days,
                         "threshold":        ADX_DETERIORATION_WARN,
                         "detail":           (
@@ -1143,11 +1143,11 @@ def load_all_latest_prices(
         {
             "AAPL.US": {
                 "close":    153.42,
-                "sma_50":   148.21,
-                "sma_200":  142.50,
-                "adx_14":   28.3,
+                "sma_fast":   148.21,
+                "sma_slow":  142.50,
+                "adx":   28.3,
                 "atr_20":   3.41,
-                "atr_20_pct": 2.23,
+                "atr_pct": 2.23,
                 "volume":   52_000_000,
                 "date":     "2026-02-10",
                 "_df_full": <DataFrame>,   # for multi-bar trend checks
@@ -1168,8 +1168,8 @@ def load_all_latest_prices(
             "date":     df.index[-1].strftime("%Y-%m-%d"),
         }
 
-        for col in ["close", "sma_50", "sma_200", "adx_14",
-                    "atr_20", "atr_20_pct", "volume"]:
+        for col in ["close", "sma_fast", "sma_slow", "adx",
+                    "atr_20", "atr_pct", "volume"]:
             val = latest.get(col) if hasattr(latest, "get") else (
                 latest[col] if col in df.columns else None
             )
@@ -1230,8 +1230,8 @@ def build_position_detail(
     Each row includes:
         symbol, current_price, entry_price, shares, position_value_eur,
         unrealized_pnl_eur, unrealized_pnl_pct, stop_price, stop_type,
-        distance_to_stop_pct, trend_status (bull/bear/neutral), sma_50,
-        sma_200, adx_14, atr_20_pct, days_in_trade, data_date.
+        distance_to_stop_pct, trend_status (bull/bear/neutral), sma_fast,
+        sma_slow, adx, atr_pct, days_in_trade, data_date.
 
     Returns: list of dicts, sorted by unrealized_pnl_pct descending.
     """
@@ -1271,12 +1271,12 @@ def build_position_detail(
             )
 
         # Trend status
-        sma_50  = price_data.get("sma_50")
-        sma_200 = price_data.get("sma_200")
-        if sma_50 and sma_200:
-            if sma_50 > sma_200 and (current_price or 0) > sma_50:
+        sma_fast  = price_data.get("sma_fast")
+        sma_slow = price_data.get("sma_slow")
+        if sma_fast and sma_slow:
+            if sma_fast > sma_slow and (current_price or 0) > sma_fast:
                 trend_status = "BULL"
-            elif sma_50 < sma_200:
+            elif sma_fast < sma_slow:
                 trend_status = "BEAR"
             else:
                 trend_status = "NEUTRAL"
@@ -1306,10 +1306,10 @@ def build_position_detail(
             "stop_type":            stop_type,
             "distance_to_stop_pct": distance_to_stop_pct,
             "trend_status":         trend_status,
-            "sma_50":               round(sma_50, 4) if sma_50 else None,
-            "sma_200":              round(sma_200, 4) if sma_200 else None,
-            "adx_14":               round(price_data.get("adx_14"), 2) if price_data.get("adx_14") else None,
-            "atr_20_pct":           round(price_data.get("atr_20_pct"), 2) if price_data.get("atr_20_pct") else None,
+            "sma_fast":               round(sma_fast, 4) if sma_fast else None,
+            "sma_slow":              round(sma_slow, 4) if sma_slow else None,
+            "adx":               round(price_data.get("adx"), 2) if price_data.get("adx") else None,
+            "atr_pct":           round(price_data.get("atr_pct"), 2) if price_data.get("atr_pct") else None,
             "days_in_trade":        days_in_trade,
             "entry_date":           entry_date_str,
         })
@@ -1628,7 +1628,7 @@ def save_csv_report(
         "symbol", "data_date", "current_price", "entry_price", "shares",
         "position_value_eur", "unrealized_pnl_eur", "unrealized_pnl_pct",
         "stop_price", "stop_type", "distance_to_stop_pct",
-        "trend_status", "sma_50", "sma_200", "adx_14", "atr_20_pct",
+        "trend_status", "sma_fast", "sma_slow", "adx", "atr_pct",
         "days_in_trade", "entry_date",
     ]
 
@@ -1722,7 +1722,7 @@ def print_summary(report: Dict) -> None:
         for row in position_detail:
             pnl_pct  = row.get("unrealized_pnl_pct")
             gap_pct  = row.get("distance_to_stop_pct")
-            adx      = row.get("adx_14")
+            adx      = row.get("adx")
             days     = row.get("days_in_trade")
             price    = row.get("current_price")
             stop     = row.get("stop_price")

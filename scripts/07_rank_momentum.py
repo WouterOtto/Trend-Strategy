@@ -81,18 +81,21 @@ fundamentals_file = DATA_LOAD_DIR / 'fundamentals' / 'company_info.json'
 REPORTS_DIR       = PROJECT_ROOT / "reports" / "signals"
 LOG_DIR           = PROJECT_ROOT / "logs"
 
-# --- Momentum formula parameters (do NOT change without architecture approval) ---
-MOMENTUM_SMA_PERIOD = 200   # Primary ranking formula uses SMA_200 deviation
+# ---------------------------------------------------------------------------
+# Load centralized parameters.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(PROJECT_ROOT))
+from config.params import P, ConfigurationError
 
-# --- Supplementary ROC lookback periods (stored, NOT used for ranking) ---
-ROC_PERIODS = {
-    "roc_20d":  20,
-    "roc_60d":  60,
-    "roc_120d": 120,
-}
+# Momentum formula parameters — sourced from config/strategy_parameters.json.
+MOMENTUM_SMA_PERIOD = P.momentum.sma_period
 
-# Minimum bars required to compute the longest ROC
-MIN_BARS_REQUIRED = MOMENTUM_SMA_PERIOD + ROC_PERIODS["roc_120d"] + 10  # buffer
+# Supplementary ROC lookback periods (stored, NOT used for ranking).
+ROC_PERIODS = {f"roc_{n}d": n for n in P.momentum.roc_periods}
+
+# Minimum bars required to compute the longest ROC.
+MIN_BARS_REQUIRED = MOMENTUM_SMA_PERIOD + max(P.momentum.roc_periods) + 10
 
 # ============================================================================
 # LOGGING
@@ -131,7 +134,7 @@ def load_qualified_trends(as_of_date: str) -> Dict:
 
     Returns:
         Dict keyed by symbol, each value contains:
-            symbol, sma_50, sma_200, close, adx_14, atr_20_pct, qualified_date
+            symbol, sma_fast, sma_slow, close, adx, atr_pct, qualified_date
 
     Raises:
         SystemExit if file not found or empty
@@ -219,7 +222,7 @@ def load_indicator_data(symbol: str) -> Optional[pd.DataFrame]:
 
     Expected columns:
         close, high, low, open, volume,
-        adjusted_close, sma_50, sma_200, atr_20_pct, adx_14
+        adjusted_close, sma_fast, sma_slow, atr_pct, adx
 
     Args:
         symbol: Instrument identifier (e.g. 'AAPL.US')
@@ -299,23 +302,23 @@ def calculate_momentum_score(
     # -------------------------------------------------------------------------
     # Guard: required columns must be present
     # -------------------------------------------------------------------------
-    required_cols = {'close', 'sma_200'}
+    required_cols = {'close', 'sma_slow'}
     missing = required_cols - set(df_to_date.columns)
     if missing:
         logger.debug(f"{symbol}: Missing columns {missing}")
         return None, {}
 
     close   = latest['close']
-    sma_200 = latest['sma_200']
+    sma_slow = latest['sma_slow']
 
-    if pd.isna(close) or pd.isna(sma_200) or sma_200 == 0:
-        logger.debug(f"{symbol}: NaN or zero in close/sma_200")
+    if pd.isna(close) or pd.isna(sma_slow) or sma_slow == 0:
+        logger.debug(f"{symbol}: NaN or zero in close/sma_slow")
         return None, {}
 
     # -------------------------------------------------------------------------
     # Primary score
     # -------------------------------------------------------------------------
-    momentum_score = ((close - sma_200) / sma_200) * 100
+    momentum_score = ((close - sma_slow) / sma_slow) * 100
 
     # -------------------------------------------------------------------------
     # Supplementary ROC metrics (stored for transparency, not used for ranking)
@@ -426,10 +429,10 @@ def rank_momentum(as_of_date: str) -> Tuple[List[Dict], Dict]:
 
             # ââ Trend qualification snapshot (from Script 6) âââââââââââââââââ
             'close':        trend_data['close'],
-            'sma_50':       trend_data['sma_50'],
-            'sma_200':      trend_data['sma_200'],
-            'adx_14':       trend_data['adx_14'],
-            'atr_20_pct':   trend_data['atr_20_pct'],
+            'sma_fast':       trend_data['sma_fast'],
+            'sma_slow':      trend_data['sma_slow'],
+            'adx':       trend_data['adx'],
+            'atr_pct':   trend_data['atr_pct'],
 
             # ââ Supplementary ROC metrics (transparency, not for ranking) ââââ
             'roc_20d':      supplementary.get('roc_20d'),
@@ -528,7 +531,7 @@ def save_momentum_csv(ranked_list: List[Dict], output_file: Path) -> None:
 
     Columns:
         rank, symbol, name, exchange, sector, asset_class,
-        momentum_score, close, sma_50, sma_200, adx_14, atr_20_pct,
+        momentum_score, close, sma_fast, sma_slow, adx, atr_pct,
         roc_20d, roc_60d, roc_120d, as_of_date
     """
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -543,7 +546,7 @@ def save_momentum_csv(ranked_list: List[Dict], output_file: Path) -> None:
     col_order = [
         'rank', 'symbol', 'name', 'exchange', 'sector', 'asset_class',
         'momentum_score',
-        'close', 'sma_50', 'sma_200', 'adx_14', 'atr_20_pct',
+        'close', 'sma_fast', 'sma_slow', 'adx', 'atr_pct',
         'roc_20d', 'roc_60d', 'roc_120d',
         'as_of_date', 'scoring_formula'
     ]
@@ -575,8 +578,8 @@ def print_top_n_summary(ranked_list: List[Dict], n: int = 20) -> None:
         line = (
             f"{entry['rank']:>4}  {entry['symbol']:<16} "
             f"{entry['momentum_score']:>+8.2f}  "
-            f"{entry['close']:>8.2f}  {entry['sma_200']:>8.2f}  "
-            f"{entry['adx_14']:>6.1f}  {entry['atr_20_pct']:>6.2f}  "
+            f"{entry['close']:>8.2f}  {entry['sma_slow']:>8.2f}  "
+            f"{entry['adx']:>6.1f}  {entry['atr_pct']:>6.2f}  "
             f"{roc20:>7}  {roc60:>7}"
         )
         logger.info(line)

@@ -109,8 +109,8 @@ PLOTLY_CDN          = "https://cdn.plot.ly/plotly-2.32.0.min.js"
 
 COLOURS = {
     "price":        "#2563EB",   # Blue 600
-    "sma_50":       "#F59E0B",   # Amber 400
-    "sma_200":      "#EF4444",   # Red 500
+    "sma_fast":       "#F59E0B",   # Amber 400
+    "sma_slow":      "#EF4444",   # Red 500
     "volume":       "#94A3B8",   # Slate 400
     "adx":          "#8B5CF6",   # Violet 500
     "adx_fill":     "rgba(139,92,246,0.15)",
@@ -639,7 +639,7 @@ def load_indicator_df(symbol: str) -> Optional[pd.DataFrame]:
 
     Expected columns (from Script 5):
         open, high, low, close, adjusted_close, volume,
-        sma_50, sma_200, atr_20_pct, adx_14
+        sma_fast, sma_slow, atr_pct, adx
 
     Returns None if the file doesn't exist or has too few rows.
     """
@@ -662,7 +662,7 @@ def load_indicator_df(symbol: str) -> Optional[pd.DataFrame]:
         # Cast numeric columns (guard against object dtype in parquet)
         numeric_cols = [
             "open", "high", "low", "close", "adjusted_close",
-            "volume", "sma_50", "sma_200", "atr_20_pct", "adx_14",
+            "volume", "sma_fast", "sma_slow", "atr_pct", "adx",
         ]
         for col in numeric_cols:
             if col in df.columns:
@@ -932,19 +932,19 @@ class TechnicalChartGenerator:
             hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Price: %{y:,.2f}<extra></extra>",
         ), row=1, col=1)
 
-        if "sma_50" in df.columns:
+        if "sma_fast" in df.columns:
             fig.add_trace(go.Scatter(
-                x=dates, y=df["sma_50"].round(4),
+                x=dates, y=df["sma_fast"].round(4),
                 name="SMA 50",
-                line=dict(color=COLOURS["sma_50"], width=1.4, dash="dot"),
+                line=dict(color=COLOURS["sma_fast"], width=1.4, dash="dot"),
                 hovertemplate="SMA 50: %{y:,.2f}<extra></extra>",
             ), row=1, col=1)
 
-        if "sma_200" in df.columns:
+        if "sma_slow" in df.columns:
             fig.add_trace(go.Scatter(
-                x=dates, y=df["sma_200"].round(4),
+                x=dates, y=df["sma_slow"].round(4),
                 name="SMA 200",
-                line=dict(color=COLOURS["sma_200"], width=1.8, dash="dash"),
+                line=dict(color=COLOURS["sma_slow"], width=1.8, dash="dash"),
                 hovertemplate="SMA 200: %{y:,.2f}<extra></extra>",
             ), row=1, col=1)
 
@@ -973,9 +973,9 @@ class TechnicalChartGenerator:
 
         # ââ Row 3 : ADX âââââââââââââââââââââââââââââââââââââââââââââââââ
 
-        if "adx_14" in df.columns:
+        if "adx" in df.columns:
             fig.add_trace(go.Scatter(
-                x=dates, y=df["adx_14"].round(2),
+                x=dates, y=df["adx"].round(2),
                 name="ADX (14)",
                 line=dict(color=COLOURS["adx"], width=1.6),
                 fill="tozeroy",
@@ -997,9 +997,9 @@ class TechnicalChartGenerator:
 
         # ââ Row 4 : ATR % âââââââââââââââââââââââââââââââââââââââââââââââ
 
-        if "atr_20_pct" in df.columns:
+        if "atr_pct" in df.columns:
             fig.add_trace(go.Scatter(
-                x=dates, y=df["atr_20_pct"].round(3),
+                x=dates, y=df["atr_pct"].round(3),
                 name="ATR % (20)",
                 line=dict(color=COLOURS["atr"], width=1.6),
                 fill="tozeroy",
@@ -1893,7 +1893,7 @@ def main() -> None:
 
     # Build momentum lookup: symbol → score
     # Primary source: momentum_ranked.json  (Script 7 output)
-    # Fallback:       qualified_trends.json (Script 6 – has close + sma_200)
+    # Fallback:       qualified_trends.json (Script 6 – has close + sma_slow)
     momentum_map: Dict[str, float] = {}
     for r in ranked:
         if isinstance(r, dict) and "symbol" in r and "momentum_score" in r:
@@ -1910,9 +1910,9 @@ def main() -> None:
                     continue
                 try:
                     close   = float(snap.get("close",   0) or 0)
-                    sma_200 = float(snap.get("sma_200", 0) or 0)
-                    if sma_200 > 0:
-                        momentum_map[sym] = round((close - sma_200) / sma_200 * 100, 4)
+                    sma_slow = float(snap.get("sma_slow", 0) or 0)
+                    if sma_slow > 0:
+                        momentum_map[sym] = round((close - sma_slow) / sma_slow * 100, 4)
                 except (TypeError, ValueError):
                     pass
         if momentum_map:
