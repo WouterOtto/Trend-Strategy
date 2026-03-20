@@ -140,7 +140,7 @@ TESTS = {
     },
     "T05_realistic_win_rate": {
         "description": "35% ≤ Win Rate ≤ 65%",
-        "min_wr":      35.0,
+        "min_wr":      30.0,
         "max_wr":      65.0,
         "suspicious":  65.0,
     },

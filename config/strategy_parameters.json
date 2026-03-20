@@ -1,15 +1,15 @@
 {
   "_meta": {
-    "version": "3.8",
-    "last_updated": "2026-03-18",
+    "version": "3.9",
+    "last_updated": "2026-03-20",
     "description": "Single source of truth for all strategy, backtest, and optimizer parameters. Edit this file only. Never hardcode values in scripts.",
-    "architecture_ref": "Multi-Asset Trend Following Strategy v3.8 (Mar 2026)"
+    "architecture_ref": "Multi-Asset Trend Following Strategy v3.9 (Mar 2026)"
   },
 
   "indicators": {
     "_comment": "Technical indicator periods. sma_fast/sma_slow drive compute_indicators() in Script 16/17. atr_period drives stop-loss sizing in Scripts 8/16. adx_period is fixed at 14 (Wilder standard).",
     "sma_fast": 100,
-    "sma_slow": 250,
+    "sma_slow": 200,
     "atr_period": 20,
     "adx_period": 14
   },
@@ -26,7 +26,7 @@
 
   "momentum": {
     "_comment": "Momentum scoring formula: Score = ((Close - SMA_slow) / SMA_slow) * 100. sma_period must match indicators.sma_slow. ROC periods are supplementary (stored, not used for ranking).",
-    "sma_period": 250,
+    "sma_period": 200,
     "roc_periods": [20, 60, 120]
   },
 
@@ -109,21 +109,21 @@
   },
 
   "optimization_grid": {
-    "_comment": "Full WFO parameter search space (Script 17). Only include parameters whose variation meaningfully changes strategy behaviour. Fixed params (sma_fast, adx_threshold, risk_per_trade) are in fixed_params below. Grid must never have all values at one edge — expand if optimizer converges to boundary.",
-    "sma_slow":       [200, 250, 300],
-    "trail_stop_mult":[3.0, 3.5, 4.0, 4.5],
-    "max_positions":  [30, 35, 40, 45]
+    "_comment": "Full WFO parameter search space (Script 17). Only include parameters whose variation meaningfully changes strategy behaviour. Fixed params (sma_fast, adx_threshold, risk_per_trade) are in fixed_params below. Grid must never have all values at one edge — expand if optimizer converges to boundary. trail_stop_mult extended to 5.5 (Run 5: mean=4.82, recommended=5.5). max_positions mean=40 across runs — expand to 50 next iteration.",
+    "sma_slow":       [150, 200, 250, 300, 350],
+    "trail_stop_mult":[3.0, 3.5, 4.0, 4.5, 5.0, 5.5],
+    "max_positions":  [30, 35, 40, 45, 50]
   },
 
   "optimization_grid_fast": {
-    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on current optimal values.",
-    "sma_slow":       [200, 250, 300],
-    "trail_stop_mult":[3.5, 4.0, 4.5],
-    "max_positions":  [20, 25]
+    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on current optimal values from Run 5 WFO: trail_stop_mult=5.5, sma_slow=200.",
+    "sma_slow":       [150, 200, 250],
+    "trail_stop_mult":[4.5, 5.0, 5.5],
+    "max_positions":  [35, 40, 45]
   },
 
   "fixed_params": {
-    "_comment": "Parameters excluded from WFO grid. sma_fast CV=0.374 (too unstable to optimize). adx_threshold=15 (expanded from 20 — WFO converged to lower boundary). risk_per_trade, trail_activation, cost_bps are strategy-design constants.",
+    "_comment": "Parameters excluded from WFO grid. sma_fast CV=0.374 (too unstable to optimize). adx_threshold=25 (raised from 15 — trade attribution 2022-2023 showed false entries below 25; FIX-6 ADX rising filter also applied in Script 16). init_stop_mult CV=0.000 across all 5 WFO runs — universally stable. trail_activation, risk_per_trade, cost_bps are strategy-design constants.",
     "sma_fast": 100,
     "adx_threshold": 25,
     "init_stop_mult": 2.5,
