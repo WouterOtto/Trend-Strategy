@@ -1,15 +1,15 @@
 {
   "_meta": {
-    "version": "3.9",
+    "version": "3.10",
     "last_updated": "2026-03-20",
     "description": "Single source of truth for all strategy, backtest, and optimizer parameters. Edit this file only. Never hardcode values in scripts.",
-    "architecture_ref": "Multi-Asset Trend Following Strategy v3.9 (Mar 2026)"
+    "architecture_ref": "Multi-Asset Trend Following Strategy v3.10 (Mar 2026)"
   },
 
   "indicators": {
     "_comment": "Technical indicator periods. sma_fast/sma_slow drive compute_indicators() in Script 16/17. atr_period drives stop-loss sizing in Scripts 8/16. adx_period is fixed at 14 (Wilder standard).",
     "sma_fast": 100,
-    "sma_slow": 200,
+    "sma_slow": 250,
     "atr_period": 20,
     "adx_period": 14
   },
@@ -26,7 +26,7 @@
 
   "momentum": {
     "_comment": "Momentum scoring formula: Score = ((Close - SMA_slow) / SMA_slow) * 100. sma_period must match indicators.sma_slow. ROC periods are supplementary (stored, not used for ranking).",
-    "sma_period": 200,
+    "sma_period": 250,
     "roc_periods": [20, 60, 120]
   },
 
@@ -116,9 +116,9 @@
   },
 
   "optimization_grid_fast": {
-    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on current optimal values from Run 5 WFO: trail_stop_mult=5.5, sma_slow=200.",
-    "sma_slow":       [150, 200, 250],
-    "trail_stop_mult":[4.5, 5.0, 5.5],
+    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on deployed values: sma_slow=250, trail_stop_mult=3.5.",
+    "sma_slow":       [200, 250, 300],
+    "trail_stop_mult":[3.0, 3.5, 4.0],
     "max_positions":  [35, 40, 45]
   },
 
