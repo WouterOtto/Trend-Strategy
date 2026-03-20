@@ -1036,8 +1036,9 @@ def check_correlation_risk(
         return []
 
     corr_matrix = returns_df.corr()
-    np.fill_diagonal(corr_matrix.values, np.nan)
-    max_corr = float(np.nanmax(corr_matrix.values))
+    corr_vals = corr_matrix.to_numpy().copy()          # writable copy — .values can be read-only in NumPy ≥1.24
+    np.fill_diagonal(corr_vals, np.nan)
+    max_corr = float(np.nanmax(corr_vals))
 
     if max_corr <= max_correlation:
         logger.info(
