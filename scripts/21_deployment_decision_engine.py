@@ -1563,6 +1563,12 @@ def _parse_args() -> argparse.Namespace:
                    help="Random seed for reproducibility")
     p.add_argument("--no-html",           action="store_true",
                    help="Skip HTML dashboard generation")
+    p.add_argument("--config",
+                   metavar="PATH", default=None,
+                   help="Experiment parameters JSON (accepted for pipeline compatibility).")
+    p.add_argument("--output-dir",
+                   metavar="PATH", default=None, dest="output_dir",
+                   help="Read backtest/WFO inputs from this experiment directory.")
     return p.parse_args()
 
 
@@ -1696,6 +1702,19 @@ def run(
 
 if __name__ == "__main__":
     args = _parse_args()
+
+    # Experiment mode: redirect BACKTEST_DIR and WFO_DIR to --output-dir
+    if getattr(args, "output_dir", None):
+        import sys as _sys
+        from pathlib import Path as _Path
+        # Import the module globals to override them
+        import importlib, types
+        _mod = sys.modules[__name__]
+        _od = _Path(args.output_dir)
+        _mod.BACKTEST_DIR = (_od if _od.is_absolute() else _Path(__file__).parent.parent / _od).resolve()
+        _mod.WFO_DIR      = _mod.BACKTEST_DIR / "walk_forward"
+        print(f"S21 reading from experiment dir: {_mod.BACKTEST_DIR}")
+
     result = run(
         backtest_tag      = args.backtest_tag,
         wfo_tag           = args.wfo_tag,

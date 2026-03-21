@@ -16,6 +16,7 @@ PIPELINE MODES
   monthly     End-of-month rebalancing (Saturday, ~2-12 hrs, run overnight) + analytics
   quarterly   Monthly rebalancing + data quality audit + analytics (~3-4 hrs)
   backtest    Full backtest validation pipeline (engine + optimizer + monte carlo + validators, hours/days)
+  experiment  Run backtest pipeline with an alternate config file (--config + --output-dir required)
   validation  Validate existing backtest results only (validators + decision engine, ~5 min)
   analytics   Performance review only (attribution + risk + dashboard, ~30 sec)
   report      Re-generate PDF report from latest rebalancing JSON
@@ -55,6 +56,14 @@ QUICK-START
       --backtest-end 2024-12-31 \
       --initial-equity 10000
 
+  # Experiment: test alternate config through full backtest pipeline:
+  python scripts/00_trend_strategy_pipeline.py experiment \
+      --config strategy_parameters_exp_roc.json \
+      --output-dir results/exp_roc \
+      --backtest-start 2019-01-01 \
+      --backtest-end 2024-12-31 \
+      --initial-equity 10000
+
   # Validate existing backtest results (fast, ~5 min):
   python scripts/00_trend_strategy_pipeline.py validation
 
@@ -71,8 +80,10 @@ QUICK-START
 
   # Custom with mode inheritance (monthly behavior, custom steps):
   python scripts/00_trend_strategy_pipeline.py custom --as-monthly \
-      --steps 1,3,4,5,6,7,8,11,12 \
-      --as-of-date 2026-01-31 --account-equity 50000
+      --steps 6,7,8,9,10,11,12,15 \
+      --as-of-date 2026-03-19 \
+      --account-equity 20000 \
+      --vix 18.5
 
 DEPENDENCIES
 ------------
@@ -105,7 +116,7 @@ from typing import List, Optional, Tuple
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Maps canonical script numbers → file names
@@ -169,6 +180,7 @@ PIPELINES: dict[str, List[int]] = {
     "monthly":    [4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 22, 23, 24],  # Monthly: full rebalancing + analytics
     "quarterly":  [4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 22, 23, 24],  # Quarterly: + data validation + analytics
     "backtest":   [16, 17, 18, 19, 20, 21],        # Backtest: full validation pipeline (long-running)
+    "experiment": [16, 17, 18, 19, 20, 21],        # Experiment: same pipeline, alternate --config + --output-dir
     "validation": [19, 20, 21],                    # Validation: validate existing backtest results (fast)
     "analytics":  [22, 23, 24],                    # Analytics: performance review only (fast)
     "report":     [12],                            # Report-only: regenerate PDF
@@ -525,6 +537,16 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
         # Scripts 19-21: Validators and deployment decision
         # These read backtest results from files, minimal args needed
         pass
+
+    # ── Experiment: forward --config and --output-dir to all backtest scripts ─
+    # Scripts 7, 16-21 all accept --config and --output-dir when present.
+    exp_config = getattr(ns, "config", None)
+    if exp_config and num in (7, 16, 17, 18, 19, 20, 21):
+        a += ["--config", exp_config]
+
+    exp_output_dir = getattr(ns, "output_dir", None)
+    if exp_output_dir and num in (7, 16, 17, 18, 19, 20, 21):
+        a += ["--output-dir", exp_output_dir]
 
     # ── Universal: --dry-run ──────────────────────────────────────────────────
     # Script 15 only writes HTML reports
@@ -914,7 +936,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── Positional: mode ──────────────────────────────────────────────────────
     parser.add_argument(
         "mode",
-        choices=["setup", "daily", "weekly", "monthly", "quarterly", "backtest", "validation", "analytics", "report", "custom"],
+        choices=["setup", "daily", "weekly", "monthly", "quarterly", "backtest", "experiment", "validation", "analytics", "report", "custom"],
         help=(
             "Pipeline mode. "
             "setup=one-time initialization; "
@@ -923,10 +945,38 @@ def build_parser() -> argparse.ArgumentParser:
             "monthly=end-of-month rebalancing (Saturday); "
             "quarterly=full rebalancing + data validation (slow); "
             "backtest=full validation pipeline (hours/days); "
+            "experiment=backtest pipeline with alternate config (requires --config + --output-dir); "
             "validation=validate existing backtest results (fast); "
             "analytics=performance review only (fast); "
             "report=PDF only; "
             "custom=manual step selection."
+        ),
+    )
+
+    # ── Experiment config overrides ───────────────────────────────────────────
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        dest="config",
+        default=None,
+        help=(
+            "Path to an alternate strategy parameters JSON file (mode=experiment only). "
+            "The file is passed as --config to Scripts 7, 16-21. "
+            "Production strategy_parameters.json is never modified. "
+            "Example: --config strategy_parameters_exp_roc.json"
+        ),
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        metavar="PATH",
+        dest="output_dir",
+        default=None,
+        help=(
+            "Directory for experiment output files (mode=experiment only). "
+            "Results are written here instead of the default data_cache/results paths. "
+            "Directory is created if it does not exist. "
+            "Example: --output-dir results/exp_roc"
         ),
     )
 
@@ -1346,6 +1396,92 @@ def main() -> int:
         SCRIPT_TIMEOUTS[21] = 3_600    # 1 hour
         ns.effective_mode = "backtest"
         steps = PIPELINES["backtest"]
+    elif ns.mode == "experiment":
+        # Experiment: same pipeline as backtest but with an alternate config file
+        # and a dedicated output directory so production results are never touched.
+        exp_config    = getattr(ns, "config", None)
+        exp_output    = getattr(ns, "output_dir", None)
+
+        if not exp_config:
+            logger.error("mode=experiment requires --config <path/to/experiment_params.json>")
+            print(_c(CLR_RED, "\n  ✖ --config is required for experiment mode.\n"
+                               "  Example: --config strategy_parameters_exp_roc.json\n"))
+            return 2
+
+        if not exp_output:
+            logger.error("mode=experiment requires --output-dir <path> to isolate results")
+            print(_c(CLR_RED, "\n  ✖ --output-dir is required for experiment mode.\n"
+                               "  Example: --output-dir results/exp_roc\n"))
+            return 2
+
+        # Resolve and validate the experiment config path.
+        # Search order (first match wins):
+        #   1. Absolute path as given
+        #   2. Relative to cwd (where the user ran the command)
+        #   3. Relative to SCRIPT_DIR  (scripts/ folder)
+        #   4. Relative to project root (SCRIPT_DIR.parent)
+        #   5. config/ subfolder under project root  ← handles config/xxx.json
+        exp_config_path = Path(exp_config)
+        if exp_config_path.is_absolute():
+            candidates = [exp_config_path]
+        else:
+            project_root = SCRIPT_DIR.parent
+            candidates = [
+                Path.cwd()               / exp_config_path,
+                SCRIPT_DIR               / exp_config_path,
+                project_root             / exp_config_path,
+                project_root / "config"  / exp_config_path.name,
+            ]
+
+        resolved = next((p for p in candidates if p.exists()), None)
+        if resolved is None:
+            searched = "\n".join(f"    {p}" for p in candidates)
+            logger.error(f"Experiment config not found. Searched:\n{searched}")
+            print(_c(CLR_RED,
+                f"\n  ✖ Config file not found: {exp_config}\n"
+                f"  Searched:\n{searched}\n"
+                f"  Tip: pass the full path, or place the file in config/ under the project root.\n"
+            ))
+            return 2
+        exp_config_path = resolved
+        # Normalise ns.config to the resolved absolute path so build_args()
+        # forwards the correct path to subscripts.
+        ns.config = str(exp_config_path)
+
+        # Apply same generous timeouts as backtest mode
+        SCRIPT_TIMEOUTS[16] = 7_200
+        SCRIPT_TIMEOUTS[17] = 28_800
+        SCRIPT_TIMEOUTS[18] = 14_400
+        SCRIPT_TIMEOUTS[19] = 7_200
+        SCRIPT_TIMEOUTS[20] = 7_200
+        SCRIPT_TIMEOUTS[21] = 3_600
+
+        ns.effective_mode = "experiment"
+        steps = PIPELINES["experiment"]
+
+        # Resolve output_dir to an absolute path.
+        # Subscripts are launched with cwd=SCRIPT_DIR (the scripts/ folder),
+        # so a relative path like 'results/exp_roc' would resolve to
+        # scripts/results/exp_roc inside each subprocess.  Normalising to
+        # absolute here means every subscript receives an unambiguous path.
+        exp_output_path = Path(exp_output)
+        if not exp_output_path.is_absolute():
+            # Resolve relative to cwd of the orchestrator (project root)
+            exp_output_path = Path.cwd() / exp_output_path
+        exp_output_path = exp_output_path.resolve()
+        exp_output      = str(exp_output_path)
+        ns.output_dir   = exp_output   # build_args() forwards this absolute path
+
+        # Ensure output dir exists so scripts can write into it
+        exp_output_path.mkdir(parents=True, exist_ok=True)
+
+        print(_c(CLR_CYAN,
+            f"\n  ⚗  EXPERIMENT MODE\n"
+            f"  Config     : {exp_config_path}\n"
+            f"  Output dir : {exp_output_path}\n"
+            f"  Production strategy_parameters.json is NOT modified.\n"
+        ))
+
     elif ns.mode == "validation":
         # Validation: validate existing backtest results only
         ns.effective_mode = "validation"

@@ -1539,6 +1539,12 @@ def parse_args() -> argparse.Namespace:
         "--verbose", action="store_true",
         help="Enable DEBUG-level logging",
     )
+    p.add_argument("--config",
+                   metavar="PATH", default=None,
+                   help="Experiment parameters JSON (accepted, not used directly by S18).")
+    p.add_argument("--output-dir",
+                   metavar="PATH", default=None, dest="output_dir",
+                   help="Read backtest inputs from and write MC outputs to this directory.")
     return p.parse_args()
 
 
@@ -1551,6 +1557,14 @@ def main() -> None:
 
     global logger
     logger = setup_logging(args.output_tag)
+
+    global BACKTEST_DIR
+    if getattr(args, "output_dir", None):
+        _od = Path(args.output_dir)
+        BACKTRACK_PATH = (_od if _od.is_absolute() else Path(__file__).parent.parent / _od).resolve()
+        BACKTEST_DIR   = BACKTRACK_PATH
+        logger.info(f"Monte Carlo reading from experiment dir: {BACKTEST_DIR}")
+
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 

@@ -332,7 +332,24 @@ def compute_indicators(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
     df["sma_slow"]  = _sma(df["close"], params["sma_slow"])
     df["atr_20"]    = _atr(df, period=20)
     df["adx"]    = _adx(df, period=14)
-    df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
+    # Momentum column — formula determined by params["momentum_formula"].
+    # "sma_distance" (default/production): percentage above SMA_slow.
+    # "roc_weighted" (experiment): weighted sum of ROC lookbacks.
+    _formula = params.get("momentum_formula", "sma_distance")
+    if _formula == "roc_weighted":
+        _periods = params.get("roc_periods", [20, 60, 120])
+        _weights = params.get("roc_weights", [0.20, 0.30, 0.50])
+        _w_sum   = sum(_weights) or 1.0
+        _norm_w  = [w / _w_sum for w in _weights]
+        _roc_cols = []
+        for _w, _n in zip(_norm_w, _periods):
+            _col = f"_roc_{_n}d"
+            df[_col] = (df["close"] / df["close"].shift(_n) - 1) * _w
+            _roc_cols.append(_col)
+        df["momentum"] = df[_roc_cols].sum(axis=1) * 100
+        df.drop(columns=_roc_cols, inplace=True)
+    else:
+        df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
     df["atr_pct"]   = df["atr_20"] / df["close"]
     # FIX-2: 20-day rolling high used by is_entry_confirmed() to gate entries near strength
     df["high_20d"]  = df["close"].rolling(20, min_periods=20).max()
@@ -1834,6 +1851,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-validation",    action="store_true",
                    help="Skip 10-test validation suite (faster in optimisation loops)")
     p.add_argument("--verbose",          action="store_true")
+    p.add_argument("--config",
+                   metavar="PATH", default=None,
+                   help="Experiment parameters JSON. Overrides momentum formula/weights. "
+                        "All other params still come from CLI or production defaults.")
+    p.add_argument("--output-dir",
+                   metavar="PATH", default=None, dest="output_dir",
+                   help="Write all backtest outputs here instead of data_cache/backtest/. "
+                        "Directory is created if absent. Use for experiment isolation.")
     return p.parse_args()
 
 
@@ -1849,6 +1874,36 @@ def main() -> None:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    # ── Experiment: redirect output paths ─────────────────────────────────────
+    global BACKTEST_DIR, REPORTS_DIR
+    if args.output_dir:
+        _od = Path(args.output_dir)
+        BACKTEST_DIR = (_od if _od.is_absolute() else PROJECT_ROOT / _od).resolve()
+        REPORTS_DIR  = BACKTEST_DIR
+        BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Experiment output dir: {BACKTEST_DIR}")
+
+    # ── Experiment: load momentum config override ──────────────────────────────
+    exp_momentum: dict = {}
+    if args.config:
+        import json as _json
+        _cfg_path = Path(args.config)
+        if not _cfg_path.is_absolute():
+            _cfg_path = PROJECT_ROOT / _cfg_path
+        if _cfg_path.exists():
+            with open(_cfg_path) as _fh:
+                _exp = _json.load(_fh)
+            _mom = _exp.get("momentum", {})
+            exp_momentum = {
+                "momentum_formula": _mom.get("formula",     "sma_distance"),
+                "roc_periods":      _mom.get("roc_periods", [20, 60, 120]),
+                "roc_weights":      _mom.get("roc_weights", [0.20, 0.30, 0.50]),
+            }
+            logger.info(f"Experiment config: {_cfg_path}")
+            logger.info(f"Momentum formula : {exp_momentum['momentum_formula']}")
+        else:
+            logger.warning(f"--config path not found: {_cfg_path} — using production defaults")
+
     params = {**DEFAULTS}
     params.update({
         "initial_equity":   args.initial_equity,
@@ -1863,6 +1918,8 @@ def main() -> None:
         "risk_per_trade":   args.risk_per_trade,
         "cost_bps":         args.cost_bps,
     })
+
+    params.update(exp_momentum)   # experiment formula overrides (no-op if empty)
 
     start = pd.Timestamp(args.start_date)
     end   = pd.Timestamp(args.end_date)

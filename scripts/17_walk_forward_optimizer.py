@@ -1909,6 +1909,13 @@ Examples:
                    help="Parallel workers (default 1 = serial). Max effective = 12 indicator buckets.")
     p.add_argument("--output-tag",      default="",
                    help="Tag appended to output filenames (e.g. 'quarterly_Q4')")
+    p.add_argument("--config",
+                   metavar="PATH", default=None,
+                   help="Experiment parameters JSON — passed through to each backtest run.")
+    p.add_argument("--output-dir",
+                   metavar="PATH", default=None, dest="output_dir",
+                   help="Write WFO outputs here instead of data_cache/backtest/walk_forward/. "
+                        "Use for experiment isolation.")
     p.add_argument("--verbose",         action="store_true",
                    help="Enable DEBUG logging")
     return p
@@ -1926,6 +1933,35 @@ def main() -> None:
     args   = parser.parse_args()
 
     logger = setup_logging(args.output_tag)
+
+    # ── Experiment: redirect output paths ─────────────────────────────────────
+    global BACKTEST_DIR, WFO_DIR
+    if args.output_dir:
+        _od = Path(args.output_dir)
+        BACKTEST_DIR = (_od if _od.is_absolute() else Path(__file__).parent.parent / _od).resolve()
+        WFO_DIR      = BACKTEST_DIR / "walk_forward"
+        BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+        WFO_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Experiment WFO output dir: {WFO_DIR}")
+
+    # ── Experiment: load momentum config override for backtest params ──────────
+    _exp_momentum: dict = {}
+    if args.config:
+        import json as _json
+        _cfg_path = Path(args.config)
+        if not _cfg_path.is_absolute():
+            _cfg_path = Path(__file__).parent.parent / _cfg_path
+        if _cfg_path.exists():
+            with open(_cfg_path) as _fh:
+                _exp_cfg = _json.load(_fh)
+            _mom = _exp_cfg.get("momentum", {})
+            _exp_momentum = {
+                "momentum_formula": _mom.get("formula",     "sma_distance"),
+                "roc_periods":      _mom.get("roc_periods", [20, 60, 120]),
+                "roc_weights":      _mom.get("roc_weights", [0.20, 0.30, 0.50]),
+            }
+            logger.info(f"WFO experiment config : {_cfg_path}")
+            logger.info(f"Momentum formula      : {_exp_momentum['momentum_formula']}")
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
@@ -2048,6 +2084,12 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Walk-forward optimization
     # -----------------------------------------------------------------------
+    # Merge experiment momentum params into FIXED_PARAMS so every backtest
+    # window in the WFO grid uses the experiment formula.
+    if _exp_momentum:
+        FIXED_PARAMS.update(_exp_momentum)
+        logger.info(f"WFO: experiment momentum params merged into FIXED_PARAMS: {_exp_momentum}")
+
     t0      = datetime.now()
     windows = run_walk_forward(
         price_data     = price_data,

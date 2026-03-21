@@ -1549,12 +1549,29 @@ Examples:
         "--skip-benchmark", action="store_true",
         help="Skip benchmark comparison (useful when operating offline)",
     )
+    p.add_argument("--config",
+                   metavar="PATH", default=None,
+                   help="Experiment parameters JSON (accepted for pipeline compatibility).")
+    p.add_argument("--output-dir",
+                   metavar="PATH", default=None, dest="output_dir",
+                   help="Read backtest/WFO inputs from this experiment directory.")
     return p.parse_args()
 
 
 def main():
     args   = parse_args()
     logger = setup_logging(args.backtest_tag)
+
+    global BACKTEST_DIR
+    if getattr(args, 'output_dir', None):
+        _od = Path(args.output_dir)
+        BACKTEST_DIR = (_od if _od.is_absolute() else Path(__file__).parent.parent / _od).resolve()
+
+    global WFO_DIR
+    if getattr(args, 'output_dir', None):
+        WFO_DIR = BACKTEST_DIR / 'walk_forward'
+        logger.info(f"S19 reading from experiment dir: {BACKTEST_DIR}")
+
     results = run_validation(
         backtest_tag     = args.backtest_tag,
         benchmark_sharpe = args.benchmark_sharpe,
