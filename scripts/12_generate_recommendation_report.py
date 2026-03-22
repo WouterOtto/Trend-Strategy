@@ -58,6 +58,8 @@ Architecture: v3.2 (Feb 2026)
 
 import os
 import sys
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -1551,7 +1553,7 @@ def build_top50_table(rec: Dict, S: dict) -> List:
     return story
 
 
-def build_multi_scenario_pdf(rec: Dict, output_path: Path) -> None:
+def build_multi_scenario_pdf(rec: Dict, output_path: Path, strategy_name: str = '') -> None:
     """
     Build comprehensive PDF with comparison + full execution details for all 3 scenarios.
     
@@ -1587,6 +1589,18 @@ def build_multi_scenario_pdf(rec: Dict, output_path: Path) -> None:
     on_page = _make_page_decorator(month)
     
     story = []
+    # ── Strategy identification header ──────────────────────────
+    if strategy_name:
+        from config.strategies import StrategyRegistry
+        try:
+            _reg = StrategyRegistry()
+            _s   = _reg.get(strategy_name)
+            _lbl = f"{_s.label}  ·  {'LIVE' if _s.deployed else 'PAPER TRADING'}"
+        except Exception:
+            _lbl = strategy_name.upper()
+        _strat_style = ParagraphStyle('StratBadge', fontSize=11, textColor=colors.HexColor('#1a3a5c'), spaceAfter=4, spaceBefore=0, fontName='Helvetica-Bold')
+        _strat_para  = Paragraph(f'Strategy: {_lbl}', _strat_style)
+
     
     # ========================================================================
     # PART 1: COVER & COMPARISON
@@ -1888,7 +1902,7 @@ def build_multi_scenario_pdf(rec: Dict, output_path: Path) -> None:
 # PDF BUILDER
 # ============================================================================
 
-def build_halted_pdf(rec: Dict, output_path: Path) -> None:
+def build_halted_pdf(rec: Dict, output_path: Path, strategy_name: str = '') -> None:
     """
     Produce a minimal PDF for a HALT_ALL circuit-breaker state.
 
@@ -1991,9 +2005,11 @@ def build_halted_pdf(rec: Dict, output_path: Path) -> None:
 
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     logger.info(f"Halted-state PDF written ({output_path.stat().st_size / 1024:.1f} KB)")
+    if strategy_name:
+        logger.info(f'Strategy: {strategy_name}')
 
 
-def build_pdf(rec: Dict, output_path: Path) -> None:
+def build_pdf(rec: Dict, output_path: Path, strategy_name: str = '') -> None:
     """
     Assemble all sections and produce the PDF.
     
@@ -2008,12 +2024,12 @@ def build_pdf(rec: Dict, output_path: Path) -> None:
     if format_type == 'halted':
         # All trading suspended — produce a minimal circuit-breaker report
         logger.warning("Status is HALTED — generating circuit-breaker report (no trade recommendations).")
-        build_halted_pdf(rec, output_path)
+        build_halted_pdf(rec, output_path, strategy_name=strategy_name)
         return
 
     if format_type == 'multi':
         # Multi-scenario format: Build comprehensive comparison + execution PDF
-        build_multi_scenario_pdf(rec, output_path)
+        build_multi_scenario_pdf(rec, output_path, strategy_name=strategy_name)
         return
     
     # Single-scenario format: Use original logic below
@@ -2173,6 +2189,7 @@ Examples:
         default=False,
         help="Validate the input JSON and report its contents without writing a PDF.",
     )
+    add_strategy_argument(parser)
     return parser.parse_args()
 
 
@@ -2180,20 +2197,39 @@ Examples:
 # MAIN
 # ============================================================================
 
-def main() -> None:
-    args = parse_args()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 12 for one strategy with namespaced report output path."""
+    global REPORTS_DIR
+
+    strat_reports = strategy.reports_dir(PROJECT_ROOT, "rebalancing")
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Reports : {strat_reports}")
+
+    _orig_rep = REPORTS_DIR
+    REPORTS_DIR = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        REPORTS_DIR = _orig_rep
+
+
+def _run_core(args, strategy_name: str = '') -> None:
 
     # Resolve input path
     try:
         json_path = resolve_input_file(args.month, args.input)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
-        sys.exit(1)
+        return 1
 
     month_label = json_path.stem.replace("_recommendations", "")
 
     global logger
-    logger = setup_logging(month_label)
+    _log_label = f"{month_label}_{strategy_name}" if strategy_name else month_label
+    logger = setup_logging(_log_label)
 
     logger.info("=" * 65)
     logger.info("Script 12  |  Recommendation Report Generator  |  v3.2")
@@ -2205,7 +2241,7 @@ def main() -> None:
         rec = load_recommendations(json_path)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.error(f"Failed to load recommendations JSON: {exc}")
-        sys.exit(1)
+        return 1
 
     status = rec.get("status", "")
     exits  = rec.get("exits",   {})
@@ -2231,7 +2267,7 @@ def main() -> None:
         print(f"  Exits   : {n_mand} mandatory + {n_rot} rotation")
         print(f"  Entries : {n_ent}")
         print(f"  Holds   : {n_hold}")
-        sys.exit(0)
+        return 0
 
     # Resolve output path
     if args.output:
@@ -2239,16 +2275,17 @@ def main() -> None:
         if not output_path.is_absolute():
             output_path = PROJECT_ROOT / output_path
     else:
-        output_path = json_path.with_suffix(".pdf")
+        sfx = f"_{strategy_name}" if strategy_name else ""
+        output_path = json_path.parent / f"{json_path.stem}{sfx}.pdf"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Generate
     try:
-        build_pdf(rec, output_path)
+        build_pdf(rec, output_path, strategy_name=strategy_name)
     except Exception as exc:
         logger.exception(f"PDF generation failed: {exc}")
-        sys.exit(1)
+        return 1
 
     logger.info(f"Report saved -> {output_path}")
     print(f"\n{'=' * 65}")
@@ -2256,7 +2293,36 @@ def main() -> None:
     print(f"  PDF  -> {output_path}")
     print(f"  JSON -> {json_path}")
     print(f"{'=' * 65}\n")
-    sys.exit(0)
+    return 0
+
+
+def main() -> int:
+    args = parse_args()
+    logger.info("=" * 70)
+    logger.info("Script 12 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

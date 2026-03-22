@@ -83,6 +83,8 @@ Architecture: v3.3 (Feb 2026)
 
 import os
 import sys
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -1549,29 +1551,42 @@ Examples:
         "--skip-benchmark", action="store_true",
         help="Skip benchmark comparison (useful when operating offline)",
     )
-    p.add_argument("--config",
-                   metavar="PATH", default=None,
-                   help="Experiment parameters JSON (accepted for pipeline compatibility).")
-    p.add_argument("--output-dir",
-                   metavar="PATH", default=None, dest="output_dir",
-                   help="Read backtest/WFO inputs from this experiment directory.")
+    add_strategy_argument(parser)
     return p.parse_args()
 
 
-def main():
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 19 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, WFO_DIR, MC_DIR, REPORTS_DIR
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_wfo      = strategy.wfo_dir(DATA_CACHE_DIR)
+    strat_mc       = strategy.mc_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'validation')
+    strat_backtest.mkdir(parents=True, exist_ok=True)
+    strat_wfo.mkdir(parents=True, exist_ok=True)
+    strat_mc.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    _o_bt, _o_wfo, _o_mc, _o_rp = BACKTEST_DIR, WFO_DIR, MC_DIR, REPORTS_DIR
+    BACKTEST_DIR = strat_backtest
+    WFO_DIR      = strat_wfo
+    MC_DIR       = strat_mc
+    REPORTS_DIR  = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        BACKTEST_DIR, WFO_DIR, MC_DIR, REPORTS_DIR = _o_bt, _o_wfo, _o_mc, _o_rp
+
+
+def _run_core(args, strategy_name: str = '') -> int:
     args   = parse_args()
     logger = setup_logging(args.backtest_tag)
-
-    global BACKTEST_DIR
-    if getattr(args, 'output_dir', None):
-        _od = Path(args.output_dir)
-        BACKTEST_DIR = (_od if _od.is_absolute() else Path(__file__).parent.parent / _od).resolve()
-
-    global WFO_DIR
-    if getattr(args, 'output_dir', None):
-        WFO_DIR = BACKTEST_DIR / 'walk_forward'
-        logger.info(f"S19 reading from experiment dir: {BACKTEST_DIR}")
-
     results = run_validation(
         backtest_tag     = args.backtest_tag,
         benchmark_sharpe = args.benchmark_sharpe,
@@ -1593,9 +1608,9 @@ def main():
 
     # Exit code 0 → APPROVE/CONDITIONAL, 1 → REJECT/UNKNOWN
     if decision.get("verdict") in ("APPROVE", "CONDITIONAL"):
-        sys.exit(0)
+        return 0
     else:
-        sys.exit(1)
+        return 1
 
 
 # ===========================================================================
@@ -1620,6 +1635,35 @@ def run_backtest_validation(
         skip_benchmark   = skip_benchmark,
         logger           = logger,
     )
+
+
+def main() -> int:
+    args = parse_args()
+    logger.info("=" * 70)
+    logger.info("Script 19 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

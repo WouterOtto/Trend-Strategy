@@ -109,6 +109,8 @@ Architecture: v3.3 (Mar 2026)
 
 import os
 import sys
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -1563,12 +1565,7 @@ def _parse_args() -> argparse.Namespace:
                    help="Random seed for reproducibility")
     p.add_argument("--no-html",           action="store_true",
                    help="Skip HTML dashboard generation")
-    p.add_argument("--config",
-                   metavar="PATH", default=None,
-                   help="Experiment parameters JSON (accepted for pipeline compatibility).")
-    p.add_argument("--output-dir",
-                   metavar="PATH", default=None, dest="output_dir",
-                   help="Read backtest/WFO inputs from this experiment directory.")
+    add_strategy_argument(p)
     return p.parse_args()
 
 
@@ -1700,29 +1697,68 @@ def run(
 # ENTRY POINT
 # ===========================================================================
 
-if __name__ == "__main__":
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 21 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, WFO_DIR, MC_DIR, DEPLOYMENT_DIR, REPORTS_DIR
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_wfo      = strategy.wfo_dir(DATA_CACHE_DIR)
+    strat_mc       = strategy.mc_dir(DATA_CACHE_DIR)
+    strat_deploy   = strategy.deployment_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, "deployment")
+    for _d in [strat_backtest, strat_wfo, strat_mc, strat_deploy, strat_reports]:
+        _d.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+
+    _o_bt, _o_wfo, _o_mc, _o_dep, _o_rp = BACKTEST_DIR, WFO_DIR, MC_DIR, DEPLOYMENT_DIR, REPORTS_DIR
+    BACKTEST_DIR   = strat_backtest
+    WFO_DIR        = strat_wfo
+    MC_DIR         = strat_mc
+    DEPLOYMENT_DIR = strat_deploy
+    REPORTS_DIR    = strat_reports
+    try:
+        result = run(
+            backtest_tag     = getattr(args, "backtest_tag", ""),
+            wfo_tag          = getattr(args, "wfo_tag", ""),
+            skip_permutation = getattr(args, "skip_permutation", False),
+            strict           = getattr(args, "strict", False),
+            starting_capital = getattr(args, "starting_capital", 10000.0),
+            mc_sims          = getattr(args, "mc_sims", 10000),
+            rng_seed         = getattr(args, "rng_seed", 42),
+            no_html          = getattr(args, "no_html", False),
+        )
+        return 0 if result.get("tier", 5) <= 4 else 1
+    finally:
+        BACKTEST_DIR, WFO_DIR, MC_DIR, DEPLOYMENT_DIR, REPORTS_DIR = _o_bt, _o_wfo, _o_mc, _o_dep, _o_rp
+
+
+def main() -> int:
     args = _parse_args()
+    print("=" * 70)
+    print("Script 21 -- Deployment Decision Engine -- Architecture v3.9")
+    print("=" * 70)
 
-    # Experiment mode: redirect BACKTEST_DIR and WFO_DIR to --output-dir
-    if getattr(args, "output_dir", None):
-        import sys as _sys
-        from pathlib import Path as _Path
-        # Import the module globals to override them
-        import importlib, types
-        _mod = sys.modules[__name__]
-        _od = _Path(args.output_dir)
-        _mod.BACKTEST_DIR = (_od if _od.is_absolute() else _Path(__file__).parent.parent / _od).resolve()
-        _mod.WFO_DIR      = _mod.BACKTEST_DIR / "walk_forward"
-        print(f"S21 reading from experiment dir: {_mod.BACKTEST_DIR}")
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Strategy resolution failed: {exc}")
+        return 1
 
-    result = run(
-        backtest_tag      = args.backtest_tag,
-        wfo_tag           = args.wfo_tag,
-        skip_permutation  = args.skip_permutation,
-        strict            = args.strict,
-        starting_capital  = args.starting_capital,
-        mc_sims           = args.mc_sims,
-        rng_seed          = args.rng_seed,
-        no_html           = args.no_html,
-    )
-    sys.exit(0 if result["tier"] <= 3 else 1)
+    print(f"Strategies : {[s.name for s in strategies]}")
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    print(f"Strategies completed. Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(main())

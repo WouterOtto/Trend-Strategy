@@ -127,6 +127,7 @@ LOG_DIR        = PROJECT_ROOT / "logs"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2 / strategy_parameters.json)
@@ -1267,6 +1268,7 @@ Exit Rules (in order of priority):
         help="Compute exit signals but do not write any output files.",
     )
 
+    add_strategy_argument(parser)
     return parser.parse_args()
 
 
@@ -1274,7 +1276,32 @@ Exit Rules (in order of priority):
 # MAIN
 # ============================================================================
 
-def main() -> int:
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run for one strategy with namespaced I/O paths."""
+    global SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+
+    strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, "signals")
+    strat_signals.mkdir(parents=True, exist_ok=True)
+    strat_portfolio.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Signals   : {strat_signals}")
+    logger.info(f"[{strategy.name}] Portfolio : {strat_portfolio}")
+
+    _orig = (SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR)
+    SIGNALS_DIR   = strat_signals
+    PORTFOLIO_DIR = strat_portfolio
+    REPORTS_DIR   = strat_reports
+    try:
+        return _run_core(args, strategy.name)
+    finally:
+        SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR = _orig
+
+
+def _run_core(args, strategy_name: str = '') -> int:
     start_time = datetime.now()
 
     logger.info("=" * 70)
@@ -1283,7 +1310,6 @@ def main() -> int:
     logger.info("=" * 70)
 
     # ââ Parse & validate arguments ââââââââââââââââââââââââââââââââââââââââââ
-    args = parse_arguments()
 
     try:
         validate_date(args.as_of_date)
@@ -1459,6 +1485,34 @@ def main() -> int:
 
     # Return 1 if any mandatory exit exists (useful for CI / alerting systems)
     return 1 if mandatory_exits > 0 else 0
+
+
+def main() -> int:
+    args = parse_arguments()
+    logger.info("=" * 70)
+    logger.info("EXIT SIGNAL GENERATOR -- Script 10")
+    logger.info("Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(getattr(args, "strategy", None), project_root=PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    logger.info(f"Next step: python scripts/11_monthly_rebalancing.py")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

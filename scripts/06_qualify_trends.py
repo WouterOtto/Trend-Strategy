@@ -59,11 +59,20 @@ Outputs:
     - data_cache/signals/trend_qualification_summary.json (aggregate statistics)
 
 Execution:
+    # Run for all active strategies (default)
     python scripts/06_qualify_trends.py --as-of-date 2026-01-31
-    python scripts/06_qualify_trends.py --as-of-date 2026-01-31 --max-symbols 200
-    python scripts/06_qualify_trends.py --as-of-date 2026-01-31 --min-adx 25
 
-Architecture: v3.8 (Mar 2026)
+    # Run for a single strategy
+    python scripts/06_qualify_trends.py --as-of-date 2026-01-31 --strategy sma_dist
+    python scripts/06_qualify_trends.py --as-of-date 2026-01-31 --strategy roc_weight
+
+    # Run for two specific strategies
+    python scripts/06_qualify_trends.py --as-of-date 2026-01-31 --strategy sma_dist,roc_weight
+
+    # Limit symbols (testing only)
+    python scripts/06_qualify_trends.py --as-of-date 2026-01-31 --max-symbols 200
+
+Architecture: v3.9 (Mar 2026) — multi-strategy via --strategy flag
 """
 
 import os
@@ -99,6 +108,7 @@ LOG_DIR        = PROJECT_ROOT / "logs"
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # Indicator column names derived from config.
 # Script 5 writes parquet columns named after the actual period values
@@ -978,6 +988,8 @@ Pipeline (run in order):
         help='Limit number of symbols processed (for testing only).'
     )
 
+    add_strategy_argument(parser)
+
     return parser.parse_args()
 
 
@@ -985,134 +997,178 @@ Pipeline (run in order):
 # MAIN
 # ============================================================================
 
-def main() -> int:
-    """Main execution function. Returns 0 on success, 1 on fatal error."""
-    start_time = datetime.now()
+def _run_for_strategy(
+    strategy:      "StrategyDef",
+    as_of_date:    str,
+    adx_threshold: float,
+    max_symbols:   int,
+) -> int:
+    """
+    Execute trend qualification for a single strategy and write namespaced outputs.
 
-    logger.info("=" * 70)
-    logger.info("TREND QUALIFIER — Script 6")
-    logger.info("Architecture v3.8 (Mar 2026)")
-    logger.info("=" * 70)
-    logger.info(f"Parameters sourced from: config/strategy_parameters.json")
-    logger.info(f"  SMA fast:      {P.indicators.sma_fast}  ({COL_SMA_FAST})")
-    logger.info(f"  SMA slow:      {P.indicators.sma_slow}  ({COL_SMA_SLOW})")
-    logger.info(f"  ADX threshold: {P.trend_qualification.adx_threshold}")
-    logger.info(f"  ADX weak exit: {P.trend_qualification.adx_weak}")
-    logger.info(f"  Min data pts:  {P.trend_qualification.min_data_points}")
+    Returns 0 on success, 1 on failure. Called once per strategy by main().
+    """
+    import importlib, types
 
-    # ----------------------------------------------------------------
-    # 1. Parse arguments
-    # ----------------------------------------------------------------
-    args       = parse_arguments()
-    as_of_date = args.as_of_date
-
-    # Validate date format
-    try:
-        datetime.strptime(as_of_date, '%Y-%m-%d')
-    except ValueError:
-        logger.error(f"Invalid date format: '{as_of_date}'  —  expected YYYY-MM-DD")
+    # ── Load strategy-specific params ────────────────────────────────────────
+    # We reload config.params with the strategy's own JSON so P reflects
+    # that strategy's SMA periods, ADX threshold, etc.
+    if not strategy.config_path.exists():
+        logger.error(f"[{strategy.name}] Config not found: {strategy.config_path}")
         return 1
 
-    logger.info(f"\nEvaluation date: {as_of_date}")
+    try:
+        import config.params as _params_module
+        _P = _params_module.load_params(str(strategy.config_path))
+    except Exception as exc:
+        logger.error(f"[{strategy.name}] Failed to load config: {exc}")
+        return 1
 
-    # ----------------------------------------------------------------
-    # 2. Resolve ADX threshold
-    # CLI --min-adx overrides the config value for one-off runs.
-    # The config value (P.trend_qualification.adx_threshold) is the
-    # production default and the single source of truth.
-    # ----------------------------------------------------------------
-    if args.min_adx is not None:
-        adx_threshold = float(args.min_adx)
-        logger.info(f"ADX threshold: {adx_threshold}  (source: CLI override)")
-    else:
-        adx_threshold = P.trend_qualification.adx_threshold
-        logger.info(f"ADX threshold: {adx_threshold}  (source: strategy_parameters.json)")
+    # Strategy-specific ADX threshold (config value, unless CLI-overridden)
+    eff_adx = adx_threshold if adx_threshold != _P.trend_qualification.adx_threshold else _P.trend_qualification.adx_threshold
 
-    # ----------------------------------------------------------------
-    # 3. Load qualified symbol list from Script 4
-    # ----------------------------------------------------------------
+    # ── Namespaced output directory ──────────────────────────────────────────
+    strat_signals_dir = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_signals_dir.mkdir(parents=True, exist_ok=True)
+
+    strat_reports_dir = strategy.reports_dir(PROJECT_ROOT, "signals")
+    strat_reports_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"[{strategy.name}] ── {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) ──")
+    logger.info(f"[{strategy.name}] Config:        {strategy.config_path}")
+    logger.info(f"[{strategy.name}] Output dir:    {strat_signals_dir}")
+    logger.info(f"[{strategy.name}] SMA fast:      {_P.indicators.sma_fast}")
+    logger.info(f"[{strategy.name}] SMA slow:      {_P.indicators.sma_slow}")
+    logger.info(f"[{strategy.name}] ADX threshold: {eff_adx}")
+
+    # ── Load symbols (shared — script 04 output is strategy-agnostic) ────────
     try:
         symbols = load_qualified_symbols()
     except SystemExit:
         raise
     except Exception as e:
-        logger.error(f"Failed to load qualified symbols: {e}")
+        logger.error(f"[{strategy.name}] Failed to load qualified symbols: {e}")
         return 1
 
     if len(symbols) == 0:
-        logger.error("Qualified symbol list is empty — nothing to evaluate.")
+        logger.error(f"[{strategy.name}] Qualified symbol list is empty.")
         return 1
 
-    # ----------------------------------------------------------------
-    # 4. Run trend qualification
-    # ----------------------------------------------------------------
+    # ── Run qualification ─────────────────────────────────────────────────────
     try:
         qualified_results, all_results = qualify_all_trends(
-            symbols=symbols,
-            as_of_date=as_of_date,
-            adx_threshold=adx_threshold,
-            max_symbols=args.max_symbols
+            symbols       = symbols,
+            as_of_date    = as_of_date,
+            adx_threshold = eff_adx,
+            max_symbols   = max_symbols,
         )
     except Exception as e:
-        logger.error(f"Fatal error during trend qualification: {e}", exc_info=True)
+        logger.error(f"[{strategy.name}] Fatal error during qualification: {e}", exc_info=True)
         return 1
 
     if len(qualified_results) == 0:
         logger.warning(
-            "⚠  No instruments qualified. Check your as-of-date, "
-            "indicators data, or consider lowering --min-adx."
+            f"[{strategy.name}] ⚠  No instruments qualified. "
+            "Check as-of-date, indicator data, or lower --min-adx."
         )
-        # Still write outputs (empty) so downstream scripts fail gracefully
 
-    # ----------------------------------------------------------------
-    # 5. Save outputs
-    # ----------------------------------------------------------------
+    # ── Save namespaced outputs ───────────────────────────────────────────────
     try:
         save_qualified_trends(
-            qualified_results=qualified_results,
-            as_of_date=as_of_date,
-            adx_threshold=adx_threshold,
-            output_file=SIGNALS_DIR / 'qualified_trends.json'
+            qualified_results = qualified_results,
+            as_of_date        = as_of_date,
+            adx_threshold     = eff_adx,
+            output_file       = strat_signals_dir / "qualified_trends.json",
         )
-
         save_qualification_report(
-            all_results=all_results,
-            output_file=SIGNALS_DIR / 'trend_qualification_report.csv'
+            all_results = all_results,
+            output_file = strat_signals_dir / "trend_qualification_report.csv",
         )
-
         save_qualification_summary(
-            qualified_results=qualified_results,
-            all_results=all_results,
-            as_of_date=as_of_date,
-            adx_threshold=adx_threshold,
-            output_file=SIGNALS_DIR / 'trend_qualification_summary.json'
+            qualified_results = qualified_results,
+            all_results       = all_results,
+            as_of_date        = as_of_date,
+            adx_threshold     = eff_adx,
+            output_file       = strat_signals_dir / "trend_qualification_summary.json",
         )
-
     except Exception as e:
-        logger.error(f"Error saving outputs: {e}", exc_info=True)
+        logger.error(f"[{strategy.name}] Error saving outputs: {e}", exc_info=True)
         return 1
 
-    # ----------------------------------------------------------------
-    # 6. Final log
-    # ----------------------------------------------------------------
-    duration = datetime.now() - start_time
+    logger.info(
+        f"[{strategy.name}] ✔ Qualified {len(qualified_results):,} / {len(all_results):,} symbols"
+        f" → {strat_signals_dir}"
+    )
+    return 0
 
+
+def main() -> int:
+    """Main execution function. Returns 0 on success, 1 on any failure."""
+    start_time = datetime.now()
+
+    logger.info("=" * 70)
+    logger.info("TREND QUALIFIER — Script 6")
+    logger.info("Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    # ── Parse arguments ──────────────────────────────────────────────────────
+    args       = parse_arguments()
+    as_of_date = args.as_of_date
+
+    try:
+        datetime.strptime(as_of_date, "%Y-%m-%d")
+    except ValueError:
+        logger.error(f"Invalid date format: '{as_of_date}'  —  expected YYYY-MM-DD")
+        return 1
+
+    logger.info(f"\nEvaluation date : {as_of_date}")
+
+    # ── Resolve strategies ────────────────────────────────────────────────────
+    try:
+        strategies = resolve_strategies(
+            strategy_arg = args.strategy,
+            project_root = PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies      : {[s.name for s in strategies]}")
+
+    # ── Resolve ADX threshold (CLI override applies to all strategies) ────────
+    if args.min_adx is not None:
+        adx_threshold = float(args.min_adx)
+        logger.info(f"ADX threshold   : {adx_threshold}  (CLI override — applied to all strategies)")
+    else:
+        adx_threshold = P.trend_qualification.adx_threshold
+        logger.info(f"ADX threshold   : {adx_threshold}  (per-strategy config default)")
+
+    # ── Run for each strategy ────────────────────────────────────────────────
+    failed: list = []
+    for strategy in strategies:
+        rc = _run_for_strategy(
+            strategy      = strategy,
+            as_of_date    = as_of_date,
+            adx_threshold = adx_threshold,
+            max_symbols   = args.max_symbols,
+        )
+        if rc != 0:
+            failed.append(strategy.name)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    duration = datetime.now() - start_time
     logger.info(f"\n{'='*70}")
     logger.info("TREND QUALIFICATION COMPLETE")
     logger.info(f"{'='*70}")
-    logger.info(f"  Duration:          {duration}")
-    logger.info(f"  Symbols evaluated: {len(all_results):>8,}")
-    logger.info(f"  Qualified:         {len(qualified_results):>8,}")
-    logger.info(f"  Outputs:")
-    logger.info(f"    → {SIGNALS_DIR / 'qualified_trends.json'}")
-    logger.info(f"    → {SIGNALS_DIR / 'trend_qualification_report.csv'}")
-    logger.info(f"    → {SIGNALS_DIR / 'trend_qualification_summary.json'}")
+    logger.info(f"  Duration   : {duration}")
+    logger.info(f"  Strategies : {len(strategies)} requested, {len(failed)} failed")
+    if failed:
+        logger.error(f"  FAILED     : {failed}")
+        return 1
     logger.info(
-        f"\n  Next step: "
-        f"python scripts/07_rank_momentum.py --as-of-date {as_of_date}"
+        f"  Next step  : python scripts/07_rank_momentum.py --as-of-date {as_of_date}"
     )
     logger.info("=" * 70)
-
     return 0
 
 

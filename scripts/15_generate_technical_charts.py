@@ -57,6 +57,8 @@ Architecture: v3.2 (Feb 2026)
 """
 
 import sys
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -1767,6 +1769,7 @@ Examples:
         default=None,
         help="Output HTML file path (default: reports/charts/technical_analysis_<ts>.html)",
     )
+    add_strategy_argument(parser)
     return parser.parse_args()
 
 
@@ -1774,8 +1777,34 @@ Examples:
 # MAIN
 # ============================================================================
 
-def main() -> None:
-    args = parse_args()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 15 for one strategy with namespaced I/O paths."""
+    global SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+
+    strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, 'charts')
+    strat_signals.mkdir(parents=True, exist_ok=True)
+    strat_portfolio.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Signals   : {strat_signals}")
+    logger.info(f"[{strategy.name}] Portfolio : {strat_portfolio}")
+    logger.info(f"[{strategy.name}] Reports   : {strat_reports}")
+
+    _orig_signals, _orig_portfolio, _orig_reports = SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+    SIGNALS_DIR = strat_signals
+    PORTFOLIO_DIR = strat_portfolio
+    REPORTS_DIR = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR = _orig_signals, _orig_portfolio, _orig_reports
+
+
+def _run_core(args, strategy_name: str = '') -> None:
 
     logger.info("=" * 70)
     logger.info("TECHNICAL ANALYSIS CHART GENERATOR â Script 15")
@@ -1791,13 +1820,13 @@ def main() -> None:
     if not INDICATORS_DIR.exists():
         logger.error(f"Indicators directory not found: {INDICATORS_DIR}")
         logger.error("Run Script 5 (05_calculate_indicators.py) first.")
-        sys.exit(1)
+        return 1
 
     n_ind = len(list(INDICATORS_DIR.glob("*_indicators.parquet")))
     if n_ind == 0:
         logger.error(f"No indicator files found in {INDICATORS_DIR}")
         logger.error("Run Script 5 (05_calculate_indicators.py) first.")
-        sys.exit(1)
+        return 1
 
     logger.info(f"Found {n_ind} indicator file(s) in cache")
 
@@ -1986,7 +2015,7 @@ def main() -> None:
 
     if not symbols:
         logger.error("Symbol list is empty – nothing to chart.")
-        sys.exit(1)
+        return 1
 
     # ââ Merge scenario tags into metadata ââââââââââââââââââââââââââââââââ
     # If --filter recommendations was used, resolve_symbols() populated the
@@ -2036,6 +2065,35 @@ def main() -> None:
     logger.info("â Done. Open in your browser:")
     logger.info(f"   file://{output_path}")
     logger.info("")
+
+
+def main() -> int:
+    args = parse_args()
+    logger.info("=" * 70)
+    logger.info("Script 15 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

@@ -107,6 +107,8 @@ Architecture: v3.2 (Feb 2026) — Multi-Asset Trend Following Strategy
 
 import os
 import sys
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -1539,12 +1541,7 @@ def parse_args() -> argparse.Namespace:
         "--verbose", action="store_true",
         help="Enable DEBUG-level logging",
     )
-    p.add_argument("--config",
-                   metavar="PATH", default=None,
-                   help="Experiment parameters JSON (accepted, not used directly by S18).")
-    p.add_argument("--output-dir",
-                   metavar="PATH", default=None, dest="output_dir",
-                   help="Read backtest inputs from and write MC outputs to this directory.")
+    add_strategy_argument(parser)
     return p.parse_args()
 
 
@@ -1552,19 +1549,36 @@ def parse_args() -> argparse.Namespace:
 # MAIN
 # ============================================================================
 
-def main() -> None:
-    args = parse_args()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 18 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, MC_DIR, REPORTS_DIR
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_mc       = strategy.mc_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'monte_carlo')
+    strat_backtest.mkdir(parents=True, exist_ok=True)
+    strat_mc.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    _o_bt, _o_mc, _o_rp = BACKTEST_DIR, MC_DIR, REPORTS_DIR
+    BACKTEST_DIR = strat_backtest
+    MC_DIR       = strat_mc
+    REPORTS_DIR  = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        BACKTEST_DIR, MC_DIR, REPORTS_DIR = _o_bt, _o_mc, _o_rp
+
+
+def _run_core(args, strategy_name: str = '') -> int:
 
     global logger
     logger = setup_logging(args.output_tag)
-
-    global BACKTEST_DIR
-    if getattr(args, "output_dir", None):
-        _od = Path(args.output_dir)
-        BACKTRACK_PATH = (_od if _od.is_absolute() else Path(__file__).parent.parent / _od).resolve()
-        BACKTEST_DIR   = BACKTRACK_PATH
-        logger.info(f"Monte Carlo reading from experiment dir: {BACKTEST_DIR}")
-
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
@@ -1637,6 +1651,35 @@ def run_monte_carlo(
         tag          = tag,
         fast_mode    = fast_mode,
     )
+
+
+def main() -> int:
+    args = parse_arguments()
+    logger.info("=" * 70)
+    logger.info("Script 18 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

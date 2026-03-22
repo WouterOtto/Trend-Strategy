@@ -124,6 +124,7 @@ LOG_DIR          = PROJECT_ROOT / "logs"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ============================================================================
 # DEFAULT STRATEGY PARAMETERS  (Architecture v3.2 production values)
@@ -332,24 +333,7 @@ def compute_indicators(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
     df["sma_slow"]  = _sma(df["close"], params["sma_slow"])
     df["atr_20"]    = _atr(df, period=20)
     df["adx"]    = _adx(df, period=14)
-    # Momentum column — formula determined by params["momentum_formula"].
-    # "sma_distance" (default/production): percentage above SMA_slow.
-    # "roc_weighted" (experiment): weighted sum of ROC lookbacks.
-    _formula = params.get("momentum_formula", "sma_distance")
-    if _formula == "roc_weighted":
-        _periods = params.get("roc_periods", [20, 60, 120])
-        _weights = params.get("roc_weights", [0.20, 0.30, 0.50])
-        _w_sum   = sum(_weights) or 1.0
-        _norm_w  = [w / _w_sum for w in _weights]
-        _roc_cols = []
-        for _w, _n in zip(_norm_w, _periods):
-            _col = f"_roc_{_n}d"
-            df[_col] = (df["close"] / df["close"].shift(_n) - 1) * _w
-            _roc_cols.append(_col)
-        df["momentum"] = df[_roc_cols].sum(axis=1) * 100
-        df.drop(columns=_roc_cols, inplace=True)
-    else:
-        df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
+    df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
     df["atr_pct"]   = df["atr_20"] / df["close"]
     # FIX-2: 20-day rolling high used by is_entry_confirmed() to gate entries near strength
     df["high_20d"]  = df["close"].rolling(20, min_periods=20).max()
@@ -1851,14 +1835,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-validation",    action="store_true",
                    help="Skip 10-test validation suite (faster in optimisation loops)")
     p.add_argument("--verbose",          action="store_true")
-    p.add_argument("--config",
-                   metavar="PATH", default=None,
-                   help="Experiment parameters JSON. Overrides momentum formula/weights. "
-                        "All other params still come from CLI or production defaults.")
-    p.add_argument("--output-dir",
-                   metavar="PATH", default=None, dest="output_dir",
-                   help="Write all backtest outputs here instead of data_cache/backtest/. "
-                        "Directory is created if absent. Use for experiment isolation.")
+    add_strategy_argument(parser)
     return p.parse_args()
 
 
@@ -1866,43 +1843,35 @@ def parse_args() -> argparse.Namespace:
 # MAIN
 # ============================================================================
 
-def main() -> None:
-    args = parse_args()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 16 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, REPORTS_DIR
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'backtest')
+    strat_backtest.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    _o_bt, _o_rp = BACKTEST_DIR, REPORTS_DIR
+    BACKTEST_DIR = strat_backtest
+    REPORTS_DIR  = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        BACKTEST_DIR, REPORTS_DIR = _o_bt, _o_rp
+
+
+def _run_core(args, strategy_name: str = '') -> int:
 
     global logger
     logger = setup_logging(args.output_tag)
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-
-    # ── Experiment: redirect output paths ─────────────────────────────────────
-    global BACKTEST_DIR, REPORTS_DIR
-    if args.output_dir:
-        _od = Path(args.output_dir)
-        BACKTEST_DIR = (_od if _od.is_absolute() else PROJECT_ROOT / _od).resolve()
-        REPORTS_DIR  = BACKTEST_DIR
-        BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Experiment output dir: {BACKTEST_DIR}")
-
-    # ── Experiment: load momentum config override ──────────────────────────────
-    exp_momentum: dict = {}
-    if args.config:
-        import json as _json
-        _cfg_path = Path(args.config)
-        if not _cfg_path.is_absolute():
-            _cfg_path = PROJECT_ROOT / _cfg_path
-        if _cfg_path.exists():
-            with open(_cfg_path) as _fh:
-                _exp = _json.load(_fh)
-            _mom = _exp.get("momentum", {})
-            exp_momentum = {
-                "momentum_formula": _mom.get("formula",     "sma_distance"),
-                "roc_periods":      _mom.get("roc_periods", [20, 60, 120]),
-                "roc_weights":      _mom.get("roc_weights", [0.20, 0.30, 0.50]),
-            }
-            logger.info(f"Experiment config: {_cfg_path}")
-            logger.info(f"Momentum formula : {exp_momentum['momentum_formula']}")
-        else:
-            logger.warning(f"--config path not found: {_cfg_path} — using production defaults")
 
     params = {**DEFAULTS}
     params.update({
@@ -1919,8 +1888,6 @@ def main() -> None:
         "cost_bps":         args.cost_bps,
     })
 
-    params.update(exp_momentum)   # experiment formula overrides (no-op if empty)
-
     start = pd.Timestamp(args.start_date)
     end   = pd.Timestamp(args.end_date)
 
@@ -1929,7 +1896,7 @@ def main() -> None:
     metadata = load_qualified_universe()
     if not metadata:
         logger.error("No symbols found - check data_cache/qualified/qualified_symbols.json")
-        sys.exit(1)
+        return 1
     logger.info(f"Universe: {len(metadata)} symbols")
 
     # --- Load & compute indicators ---
@@ -1954,7 +1921,7 @@ def main() -> None:
     logger.info(f"Loaded {len(price_data)} symbols ({skipped} skipped)")
     if not price_data:
         logger.error("No data loaded - check data_cache/consolidated/")
-        sys.exit(1)
+        return 1
 
     vix_data = load_vix_data()
     logger.info("VIX loaded for circuit breakers" if vix_data is not None
@@ -2075,6 +2042,35 @@ def precompute_indicators(
     """
     merged = {**DEFAULTS, **params}
     return {sym: compute_indicators(df, merged) for sym, df in price_data.items()}
+
+
+def main() -> int:
+    args = parse_args()
+    logger.info("=" * 70)
+    logger.info("Script 16 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

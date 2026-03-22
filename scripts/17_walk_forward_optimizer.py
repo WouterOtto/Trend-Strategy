@@ -178,6 +178,7 @@ LOG_DIR        = PROJECT_ROOT / "logs"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ---------------------------------------------------------------------------
 # Script 16 path (needed by subprocess workers for dynamic import)
@@ -1909,13 +1910,6 @@ Examples:
                    help="Parallel workers (default 1 = serial). Max effective = 12 indicator buckets.")
     p.add_argument("--output-tag",      default="",
                    help="Tag appended to output filenames (e.g. 'quarterly_Q4')")
-    p.add_argument("--config",
-                   metavar="PATH", default=None,
-                   help="Experiment parameters JSON — passed through to each backtest run.")
-    p.add_argument("--output-dir",
-                   metavar="PATH", default=None, dest="output_dir",
-                   help="Write WFO outputs here instead of data_cache/backtest/walk_forward/. "
-                        "Use for experiment isolation.")
     p.add_argument("--verbose",         action="store_true",
                    help="Enable DEBUG logging")
     return p
@@ -1925,43 +1919,41 @@ Examples:
 # ENTRY POINT
 # ===========================================================================
 
-def main() -> None:
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 17 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, WFO_DIR, REPORTS_DIR
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_wfo      = strategy.wfo_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'backtest')
+    strat_backtest.mkdir(parents=True, exist_ok=True)
+    strat_wfo.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    _o_bt, _o_wfo, _o_rp = BACKTEST_DIR, WFO_DIR, REPORTS_DIR
+    BACKTEST_DIR = strat_backtest
+    WFO_DIR      = strat_wfo
+    REPORTS_DIR  = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        BACKTEST_DIR, WFO_DIR, REPORTS_DIR = _o_bt, _o_wfo, _o_rp
+
+
+def _run_core(args, strategy_name: str = '') -> int:
     # Required on Windows/macOS (spawn start method) to prevent recursive spawning
     multiprocessing.freeze_support()
 
     parser = build_arg_parser()
+    add_strategy_argument(parser)
     args   = parser.parse_args()
 
     logger = setup_logging(args.output_tag)
-
-    # ── Experiment: redirect output paths ─────────────────────────────────────
-    global BACKTEST_DIR, WFO_DIR
-    if args.output_dir:
-        _od = Path(args.output_dir)
-        BACKTEST_DIR = (_od if _od.is_absolute() else Path(__file__).parent.parent / _od).resolve()
-        WFO_DIR      = BACKTEST_DIR / "walk_forward"
-        BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
-        WFO_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Experiment WFO output dir: {WFO_DIR}")
-
-    # ── Experiment: load momentum config override for backtest params ──────────
-    _exp_momentum: dict = {}
-    if args.config:
-        import json as _json
-        _cfg_path = Path(args.config)
-        if not _cfg_path.is_absolute():
-            _cfg_path = Path(__file__).parent.parent / _cfg_path
-        if _cfg_path.exists():
-            with open(_cfg_path) as _fh:
-                _exp_cfg = _json.load(_fh)
-            _mom = _exp_cfg.get("momentum", {})
-            _exp_momentum = {
-                "momentum_formula": _mom.get("formula",     "sma_distance"),
-                "roc_periods":      _mom.get("roc_periods", [20, 60, 120]),
-                "roc_weights":      _mom.get("roc_weights", [0.20, 0.30, 0.50]),
-            }
-            logger.info(f"WFO experiment config : {_cfg_path}")
-            logger.info(f"Momentum formula      : {_exp_momentum['momentum_formula']}")
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
@@ -2001,7 +1993,7 @@ def main() -> None:
     metadata = load_qualified_universe()
     if not metadata:
         logger.error("No symbols found — check data_cache/qualified/qualified_symbols.json")
-        sys.exit(1)
+        return 1
     logger.info(f"Universe: {len(metadata)} symbols")
 
     logger.info("Loading price data ...")
@@ -2022,7 +2014,7 @@ def main() -> None:
 
     if not price_data:
         logger.error("No price data loaded — check data_cache/consolidated/")
-        sys.exit(1)
+        return 1
 
     vix_data = load_vix_data()
     logger.info(
@@ -2084,12 +2076,6 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Walk-forward optimization
     # -----------------------------------------------------------------------
-    # Merge experiment momentum params into FIXED_PARAMS so every backtest
-    # window in the WFO grid uses the experiment formula.
-    if _exp_momentum:
-        FIXED_PARAMS.update(_exp_momentum)
-        logger.info(f"WFO: experiment momentum params merged into FIXED_PARAMS: {_exp_momentum}")
-
     t0      = datetime.now()
     windows = run_walk_forward(
         price_data     = price_data,
@@ -2241,6 +2227,35 @@ def run_walk_forward_optimization(
         "stability":    stability,
         "final_params": final_params,
     }
+
+
+def main() -> int:
+    args = build_arg_parser()
+    logger.info("=" * 70)
+    logger.info("Script 17 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

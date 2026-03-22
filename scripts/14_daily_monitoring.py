@@ -113,6 +113,7 @@ CONFIG_DIR     = PROJECT_ROOT / "config"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2)
@@ -1808,7 +1809,34 @@ Examples:
 # MAIN
 # ============================================================================
 
-def main() -> None:
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 14 for one strategy with namespaced I/O paths."""
+    global SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+
+    strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, 'daily')
+    strat_signals.mkdir(parents=True, exist_ok=True)
+    strat_portfolio.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Signals   : {strat_signals}")
+    logger.info(f"[{strategy.name}] Portfolio : {strat_portfolio}")
+    logger.info(f"[{strategy.name}] Reports   : {strat_reports}")
+
+    _orig_signals, _orig_portfolio, _orig_reports = SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+    SIGNALS_DIR = strat_signals
+    PORTFOLIO_DIR = strat_portfolio
+    REPORTS_DIR = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR = _orig_signals, _orig_portfolio, _orig_reports
+
+
+def _run_core(args, strategy_name: str = '') -> None:
     """
     Entry point.
 
@@ -1824,7 +1852,6 @@ def main() -> None:
         9. Exit with code 0 (all clear) or 1 (CRITICAL/HIGH alerts present).
     """
     parser  = build_arg_parser()
-    args    = parser.parse_args()
 
     # ââ Resolve as-of date ââââââââââââââââââââââââââââââââââââââââââââââââ
     as_of_date = args.as_of_date or date.today().strftime("%Y-%m-%d")
@@ -1833,7 +1860,7 @@ def main() -> None:
         datetime.strptime(as_of_date, "%Y-%m-%d")
     except ValueError:
         print(f"ERROR: Invalid --as-of-date format '{as_of_date}'. Use YYYY-MM-DD.")
-        sys.exit(1)
+        return 1
 
     # ââ Logging âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     global logger
@@ -1935,9 +1962,39 @@ def main() -> None:
         logger.warning(
             "Exiting with code 1 â CRITICAL or HIGH alerts require immediate attention."
         )
-        sys.exit(1)
+        return 1
 
-    sys.exit(0)
+    return 0
+
+
+def main() -> int:
+    args = add_strategy_argument(parser)
+    parser.parse_args()
+    logger.info("=" * 70)
+    logger.info("Script 14 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":
