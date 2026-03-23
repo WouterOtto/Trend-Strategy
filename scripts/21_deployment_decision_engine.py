@@ -1735,6 +1735,8 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
 
 def main() -> int:
     args = _parse_args()
+    global logger
+    logger = _build_logger(getattr(args, "backtest_tag", "") or getattr(args, "wfo_tag", ""))
     print("=" * 70)
     print("Script 21 -- Deployment Decision Engine -- Architecture v3.9")
     print("=" * 70)

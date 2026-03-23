@@ -968,6 +968,21 @@ def analyse_regime_performance(
 # PART 5 — STRUCTURAL OVERFITTING DIAGNOSTICS
 # ===========================================================================
 
+
+def _fmt_pct(v, decimals=0, default="N/A"):
+    """None-safe percentage formatter."""
+    if v is None:
+        return default
+    return f"{v:.{decimals}%}"
+
+
+def _fmt_f(v, decimals=4, default="N/A"):
+    """None-safe float formatter."""
+    if v is None:
+        return default
+    return f"{v:.{decimals}f}"
+
+
 def run_overfitting_diagnostics(
     is_metrics:       Dict,
     window_analysis:  Dict,
@@ -1010,10 +1025,10 @@ def run_overfitting_diagnostics(
     d1_triggered       = d1_all_window_fail and d1_recent_fail
 
     _d1_obs = (
-        f"all_window_ratio={stability_ratio:.4f}, "
+        f"all_window_ratio={_fmt_f(stability_ratio, 4)}, "
         f"recent_{recent_n}w_ratio={recent_stability_ratio:.4f}"
         if recent_stability_ratio is not None
-        else f"ratio={stability_ratio:.4f}"
+        else f"ratio={_fmt_f(stability_ratio, 4)}"
     ) if stability_ratio is not None else "N/A"
 
     diagnostics["D1_sharpe_collapse"] = {
@@ -1023,11 +1038,11 @@ def run_overfitting_diagnostics(
         "threshold": f"Both all-window AND recent-{recent_n}w OOS/IS Sharpe ratio < {STABILITY_FAIL}",
         "observed":  _d1_obs,
         "message": (
-            f"Both all-window ({stability_ratio:.3f}) and recent ({recent_stability_ratio:.3f}) "
+            f"Both all-window ({_fmt_f(stability_ratio, 3)}) and recent ({_fmt_f(recent_stability_ratio, 3)}) "
             f"stability ratios below {STABILITY_FAIL} — genuine OOS generalisation failure."
             if d1_triggered else
-            (f"Recent {recent_n}-window stability ratio ({recent_stability_ratio:.3f}) above threshold "
-             f"despite low all-window ratio ({stability_ratio:.3f}) — COVID-era windows depressing aggregate."
+            (f"Recent {recent_n}-window stability ratio ({_fmt_f(recent_stability_ratio, 3)}) above threshold "
+             f"despite low all-window ratio ({_fmt_f(stability_ratio, 3)}) — COVID-era windows depressing aggregate."
              if (d1_all_window_fail and not d1_recent_fail and recent_stability_ratio is not None)
              else "OOS/IS Sharpe ratio within acceptable bounds.")
         ),
@@ -1040,9 +1055,9 @@ def run_overfitting_diagnostics(
         "triggered": d2_triggered,
         "severity":  "HIGH",
         "threshold": "Avg OOS Sharpe ≤ 0",
-        "observed":  f"avg_oos_sharpe={avg_oos_sharpe:.4f}" if avg_oos_sharpe is not None else "N/A",
+        "observed":  f"avg_oos_sharpe={_fmt_f(avg_oos_sharpe, 4)}" if avg_oos_sharpe is not None else "N/A",
         "message": (
-            f"Average OOS Sharpe is {avg_oos_sharpe:.4f} — strategy has negative OOS expectancy."
+            f"Average OOS Sharpe is {_fmt_f(avg_oos_sharpe, 4)} — strategy has negative OOS expectancy."
             if d2_triggered else "Average OOS Sharpe is positive."
         ),
     }
@@ -1057,9 +1072,9 @@ def run_overfitting_diagnostics(
     d3_triggered   = d3_all_fail and not d3_recent_pass
 
     _d3_obs = (
-        f"all_window={oos_consistency:.1%}, recent_{recent_n}w={recent_oos_consistency:.1%}"
+        f"all_window={_fmt_pct(oos_consistency, 1)}, recent_{recent_n}w={_fmt_pct(recent_oos_consistency, 1)}"
         if recent_oos_consistency is not None
-        else f"consistency={oos_consistency:.1%}"
+        else f"consistency={_fmt_pct(oos_consistency, 1)}"
     ) if oos_consistency is not None else "N/A"
 
     diagnostics["D3_oos_consistency_failure"] = {
@@ -1070,14 +1085,14 @@ def run_overfitting_diagnostics(
                      f"AND recent-{recent_n}w consistency < {OOS_CONSISTENCY_WARN:.0%}",
         "observed":  _d3_obs,
         "message": (
-            f"Persistent OOS inconsistency: all-window {oos_consistency:.0%} and "
-            f"recent {recent_oos_consistency:.0%} both below thresholds."
+            f"Persistent OOS inconsistency: all-window {_fmt_pct(oos_consistency, 0)} and "
+            f"recent {_fmt_pct(recent_oos_consistency, 0)} both below thresholds."
             if d3_triggered else
-            (f"All-window consistency {oos_consistency:.0%} below threshold but "
-             f"recent {recent_n}-window consistency {recent_oos_consistency:.0%} acceptable — "
+            (f"All-window consistency {_fmt_pct(oos_consistency, 0)} below threshold but "
+             f"recent {recent_n}-window consistency {_fmt_pct(recent_oos_consistency, 0)} acceptable — "
              f"historical outlier windows depressing aggregate."
              if (d3_all_fail and d3_recent_pass)
-             else f"OOS consistency {oos_consistency:.0%} meets threshold.")
+             else f"OOS consistency {_fmt_pct(oos_consistency, 0)} meets threshold.")
         ),
     }
 
@@ -1166,12 +1181,12 @@ def run_overfitting_diagnostics(
         "triggered": d9_triggered,
         "severity":  "HIGH",
         "threshold": f"Recent {recent_n}-window OOS consistency < {RECENT_CONSISTENCY_FAIL:.0%}",
-        "observed":  f"recent_consistency={recent_oos_consistency:.1%}" if recent_oos_consistency is not None else "N/A",
+        "observed":  f"recent_consistency={_fmt_pct(recent_oos_consistency, 1)}" if recent_oos_consistency is not None else "N/A",
         "message": (
-            f"Only {recent_oos_consistency:.0%} of the last {recent_n} OOS windows are profitable — "
+            f"Only {_fmt_pct(recent_oos_consistency, 0)} of the last {recent_n} OOS windows are profitable — "
             f"strategy is currently underperforming."
             if d9_triggered else
-            (f"Recent {recent_n}-window consistency {recent_oos_consistency:.0%} is acceptable."
+            (f"Recent {recent_n}-window consistency {_fmt_pct(recent_oos_consistency, 0)} is acceptable."
              if recent_oos_consistency is not None else "Recent consistency: insufficient data.")
         ),
     }
@@ -1712,7 +1727,7 @@ Examples:
         "--strict", action="store_true",
         help="Strict mode: MARGINAL verdict is elevated to OVERFITTED"
     )
-    add_strategy_argument(parser)
+    add_strategy_argument(p)
     return p.parse_args()
 
 
@@ -1743,8 +1758,6 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
 
 
 def _run_core(args, strategy_name: str = '') -> int:
-    args   = parse_args()
-    logger = setup_logging(args.wfo_tag)
     results = run_oos_validation(
         wfo_tag         = args.wfo_tag,
         max_degradation = args.max_degradation,
@@ -1789,7 +1802,6 @@ def run_oos_validator(
     -------
     Full OOS validation results dict (identical structure to JSON output).
     """
-    logger = setup_logging(wfo_tag)
     return run_oos_validation(
         wfo_tag         = wfo_tag,
         max_degradation = max_degradation,
@@ -1800,8 +1812,10 @@ def run_oos_validator(
 
 def main() -> int:
     args = parse_args()
+    global logger
+    logger = setup_logging(getattr(args, "wfo_tag", "") or getattr(args, "output_tag", ""))
     logger.info("=" * 70)
-    logger.info("Script 20 -- Architecture v3.9 (Mar 2026)")
+    logger.info("Script 20 -- OOS Validator -- Architecture v3.9 (Mar 2026)")
     logger.info("=" * 70)
 
     try:
@@ -1824,7 +1838,6 @@ def main() -> int:
 
     logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
     return 1 if failed else 0
-
 
 
 if __name__ == "__main__":

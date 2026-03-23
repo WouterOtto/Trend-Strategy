@@ -1551,7 +1551,7 @@ Examples:
         "--skip-benchmark", action="store_true",
         help="Skip benchmark comparison (useful when operating offline)",
     )
-    add_strategy_argument(parser)
+    add_strategy_argument(p)
     return p.parse_args()
 
 
@@ -1639,6 +1639,8 @@ def run_backtest_validation(
 
 def main() -> int:
     args = parse_args()
+    global logger
+    logger = setup_logging(getattr(args, "backtest_tag", "") or getattr(args, "output_tag", ""))
     logger.info("=" * 70)
     logger.info("Script 19 -- Architecture v3.9 (Mar 2026)")
     logger.info("=" * 70)

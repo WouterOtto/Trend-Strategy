@@ -1912,6 +1912,7 @@ Examples:
                    help="Tag appended to output filenames (e.g. 'quarterly_Q4')")
     p.add_argument("--verbose",         action="store_true",
                    help="Enable DEBUG logging")
+    add_strategy_argument(p)
     return p
 
 
@@ -1950,7 +1951,6 @@ def _run_core(args, strategy_name: str = '') -> int:
     multiprocessing.freeze_support()
 
     parser = build_arg_parser()
-    add_strategy_argument(parser)
     args   = parser.parse_args()
 
     logger = setup_logging(args.output_tag)
@@ -2230,7 +2230,9 @@ def run_walk_forward_optimization(
 
 
 def main() -> int:
-    args = build_arg_parser()
+    args = build_arg_parser().parse_args()
+    global logger
+    logger = setup_logging(getattr(args, "output_tag", ""))
     logger.info("=" * 70)
     logger.info("Script 17 -- Architecture v3.9 (Mar 2026)")
     logger.info("=" * 70)

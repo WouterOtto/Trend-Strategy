@@ -59,6 +59,8 @@ Architecture: v3.2 (Feb 2026)
 import sys
 import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -491,7 +493,7 @@ def load_stop_levels() -> Dict[str, float]:
     return {}
 
 
-def load_rebalancing_recommendations() -> Tuple[Dict[str, List[str]], Set[str]]:
+def load_rebalancing_recommendations(strategy_name: str = "") -> Tuple[Dict[str, List[str]], Set[str]]:
     """
     Load the most recent monthly rebalancing recommendations from Script 11.
 
@@ -511,7 +513,9 @@ def load_rebalancing_recommendations() -> Tuple[Dict[str, List[str]], Set[str]]:
           Maps each recommended symbol to the list of scenarios that recommend it.
         - portfolio_symbols: set of symbols in current portfolio (from portfolio_state.json)
     """
-    REBALANCING_DIR = PROJECT_ROOT / "reports" / "rebalancing"
+    # Use strategy-namespaced subfolder when a strategy is active
+    _base_rec = PROJECT_ROOT / "reports" / "rebalancing"
+    REBALANCING_DIR = (_base_rec / strategy_name) if strategy_name and (_base_rec / strategy_name).exists() else _base_rec
 
     # Find most recent recommendations file
     if not REBALANCING_DIR.exists():
@@ -799,21 +803,27 @@ class TechnicalChartGenerator:
 
     def __init__(
         self,
-        lookback_days: int = DEFAULT_LOOKBACK,
-        metadata:      Optional[Dict[str, Dict]] = None,
-        momentum_map:  Optional[Dict[str, float]] = None,
-        position_map:  Optional[Dict[str, float]] = None,
-        stop_map:      Optional[Dict[str, float]] = None,
-        qualified_set: Optional[set] = None,
+        lookback_days:  int = DEFAULT_LOOKBACK,
+        metadata:       Optional[Dict[str, Dict]] = None,
+        momentum_map:   Optional[Dict[str, float]] = None,
+        position_map:   Optional[Dict[str, float]] = None,
+        stop_map:       Optional[Dict[str, float]] = None,
+        qualified_set:  Optional[set] = None,
         show_recommendation_filters: bool = False,
+        adx_threshold:  float = ADX_TREND_THRESHOLD,
+        strategy_name:  str = "",
+        strategy_label: str = "",
     ):
-        self.lookback_days = lookback_days
-        self.metadata      = metadata      or {}
-        self.momentum_map  = momentum_map  or {}
-        self.position_map  = position_map  or {}
-        self.stop_map      = stop_map      or {}
-        self.qualified_set = qualified_set or set()
+        self.lookback_days  = lookback_days
+        self.metadata       = metadata      or {}
+        self.momentum_map   = momentum_map  or {}
+        self.position_map   = position_map  or {}
+        self.stop_map       = stop_map      or {}
+        self.qualified_set  = qualified_set or set()
         self.show_recommendation_filters = show_recommendation_filters
+        self.adx_threshold  = adx_threshold
+        self.strategy_name  = strategy_name
+        self.strategy_label = strategy_label
         self._cache: Dict[str, pd.DataFrame] = {}
 
     # ------------------------------------------------------------------
@@ -882,10 +892,11 @@ class TechnicalChartGenerator:
         cap_str  = _fmt_market_cap(market_cap)
         mom_str  = f"Momentum {mom_score:+.1f}%" if mom_score is not None else ""
         pos_str  = f"Position ${position_usd:,.0f}" if position_usd else ""
-        badge    = "â QUALIFIED" if is_qualified else "â¬ UNQUALIFIED"
-        parts    = [p for p in [exchange, sector, cap_str, mom_str, pos_str, badge]
+        badge    = "&#10003; QUALIFIED" if is_qualified else "&#9711; UNQUALIFIED"
+        strat_str = f"Strategy: {self.strategy_label}" if self.strategy_label else ""
+        parts    = [p for p in [exchange, sector, cap_str, mom_str, pos_str, strat_str, badge]
                     if p and p not in ("–", "")]
-        subtitle = "  Â·  ".join(parts)
+        subtitle = "  ·  ".join(parts)
 
         title_text = (
             f"<b>{name}</b>  ({symbol})"
@@ -986,11 +997,11 @@ class TechnicalChartGenerator:
             ), row=3, col=1)
 
             fig.add_hline(
-                y=ADX_TREND_THRESHOLD,
+                y=self.adx_threshold,
                 line_dash="dash",
                 line_color="#DC2626",
                 line_width=1.0,
-                annotation_text=f"ADX threshold ({ADX_TREND_THRESHOLD})",
+                annotation_text=f"ADX threshold ({self.adx_threshold})",
                 annotation_position="top right",
                 annotation_font_size=10,
                 annotation_font_color="#DC2626",
@@ -1119,7 +1130,8 @@ class TechnicalChartGenerator:
 
         if output_path is None:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = str(REPORTS_DIR / f"technical_analysis_{ts}.html")
+            sfx = f"_{self.strategy_name}" if self.strategy_name else ""
+            output_path = str(REPORTS_DIR / f"technical_analysis{sfx}_{ts}.html")
 
         logger.info(f"Pre-loading indicator data for {len(symbols)} symbols â¦")
 
@@ -1138,6 +1150,8 @@ class TechnicalChartGenerator:
 
             valid_entries.append({
                 "symbol":     symbol,
+                "strategy":   self.strategy_name,
+                "strategy":   self.strategy_name,
                 "name":       meta.get("name", symbol),
                 "sector":     meta.get("sector", "–"),
                 "exchange":   meta.get("exchange", ""),
@@ -1174,11 +1188,11 @@ class TechnicalChartGenerator:
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(html)
 
-        logger.info(f"â Dashboard saved: {output_path}")
+        logger.info(f"Dashboard saved: {output_path}")
         logger.info(f"  Symbols rendered : {len(valid_entries)}")
         logger.info(f"  Lookback         : {self.lookback_days} trading days")
 
-        return output_path
+        return output_path, valid_entries
 
     # ------------------------------------------------------------------
     # HTML template
@@ -1292,19 +1306,31 @@ class TechnicalChartGenerator:
 '''
 
         # ââ Sidebar nav items âââââââââââââââââââââââââââââââââââââââââââââ
+        # Strategy badge for sidebar header
+        if self.strategy_label:
+            strategy_badge_html = (
+                f'<div class="strategy-badge" style="display:inline-block;margin-top:4px;'
+                f'padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;'
+                f'background:#1a4eb5;color:#fff;">'
+                f'{self.strategy_label}</div>'
+            )
+        else:
+            strategy_badge_html = ""
+
         sidebar_items_html = ""
         for e in entries:
             rank     = e.get("rank", "–")
             mom_val  = e["momentum"]
             pos_cls  = "positive" if mom_val and mom_val > 0 else ("negative" if mom_val and mom_val < 0 else "neutral")
             mom_disp = f"{mom_val:+.1f}%" if mom_val is not None else "–"
-            badge    = "â" if e["qualified"] else "â¬"
+            badge    = "&#10003;" if e["qualified"] else "&#9711;"
             safe_id  = e["symbol"].replace(".", "_")
             cap_str  = e.get("market_cap_fmt", "–")
             exch     = e.get("exchange", "").upper()
             atype    = e.get("asset_type", "stock")
             scenarios = e.get("_scenarios", [])
             scenarios_str = " ".join(scenarios) if scenarios else ""
+            strategy_key = e.get("strategy", "")
 
             sidebar_items_html += f"""
             <div class="nav-item" id="nav-{safe_id}"
@@ -1314,6 +1340,8 @@ class TechnicalChartGenerator:
                  data-exchange="{exch.lower()}"
                  data-type="{atype}"
                  data-scenarios="{scenarios_str}"
+                 data-strategy="{strategy_key}"
+                 data-strategy="{strategy_key}"
                  onclick="showChart('{safe_id}')">
               <div class="nav-row1">
                 <span class="nav-rank">#{rank}</span>
@@ -1491,7 +1519,8 @@ class TechnicalChartGenerator:
   <div id="sidebar">
 
     <div id="sidebar-header">
-      <h1>ð Technical Analysis</h1>
+      <h1>Technical Analysis</h1>
+      {strategy_badge_html}
       <div class="stats">
         {ts_str} &nbsp;|&nbsp;
         <span>{n_total}</span> charts &nbsp;|&nbsp;
@@ -1501,7 +1530,7 @@ class TechnicalChartGenerator:
 
     <div id="search-box">
       <input id="search-input" type="text"
-             placeholder="Search symbol, name or sector â¦"
+             placeholder="Search symbol, name or sector..."
              oninput="applyFilters()" autocomplete="off" />
     </div>
 
@@ -1537,7 +1566,7 @@ class TechnicalChartGenerator:
     <div id="top-bar">
       <span class="symbol-label" id="active-label">← Select a symbol</span>
       <span class="meta-label">
-        Lookback: {self.lookback_days} trading days &nbsp;|&nbsp; Architecture v3.2
+        Lookback: {self.lookback_days} trading days &nbsp;|&nbsp; Architecture v3.9{(" &nbsp;|&nbsp; " + self.strategy_label) if self.strategy_label else ""}
       </span>
     </div>
     <div id="chart-area">
@@ -1783,7 +1812,7 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
 
     strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
     strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
-    strat_reports   = strategy.reports_dir(PROJECT_ROOT, 'charts')
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, "charts")
     strat_signals.mkdir(parents=True, exist_ok=True)
     strat_portfolio.mkdir(parents=True, exist_ok=True)
     strat_reports.mkdir(parents=True, exist_ok=True)
@@ -1794,12 +1823,14 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
     logger.info(f"[{strategy.name}] Reports   : {strat_reports}")
 
     _orig_signals, _orig_portfolio, _orig_reports = SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
-    SIGNALS_DIR = strat_signals
+    SIGNALS_DIR   = strat_signals
     PORTFOLIO_DIR = strat_portfolio
-    REPORTS_DIR = strat_reports
+    REPORTS_DIR   = strat_reports
     try:
-        rc = _run_core(args, strategy.name)
-        return rc if isinstance(rc, int) else 0
+        result = _run_core(args, strategy.name)
+        if isinstance(result, tuple):
+            return result
+        return result if isinstance(result, int) else 0
     finally:
         SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR = _orig_signals, _orig_portfolio, _orig_reports
 
@@ -1961,7 +1992,7 @@ def _run_core(args, strategy_name: str = '') -> None:
     # ââ Load recommendation tags for filtering (all modes) âââââââââââââ
     # Load recommendation/portfolio tags regardless of filter mode.
     # This allows Portfolio and Recommendation filters to work with any symbol set.
-    symbol_sources, portfolio_symbols = load_rebalancing_recommendations()
+    symbol_sources, portfolio_symbols = load_rebalancing_recommendations(strategy_name=strategy_name)
     
     # Build scenario tags for all symbols
     global _SCENARIO_TAGS
@@ -2046,6 +2077,22 @@ def _run_core(args, strategy_name: str = '') -> None:
     # This works with all filter modes (recommendations, all, qualified, top)
     show_filters = len(_SCENARIO_TAGS) > 0
     
+    # Load ADX threshold from strategy config if available
+    _adx_threshold = ADX_TREND_THRESHOLD
+    try:
+        import json as _json
+        from config.strategies import StrategyRegistry
+        if strategy_name:
+            _reg = StrategyRegistry(project_root=PROJECT_ROOT)
+            _strat = _reg.get(strategy_name)
+            _cfg = _json.loads(_strat.config_path.read_text())
+            _adx_threshold = float(_cfg.get("trend_qualification", {}).get("adx_threshold", ADX_TREND_THRESHOLD))
+            _strat_label = _strat.label
+        else:
+            _strat_label = ""
+    except Exception:
+        _strat_label = strategy_name
+
     generator = TechnicalChartGenerator(
         lookback_days=args.lookback,
         metadata=metadata,
@@ -2054,23 +2101,406 @@ def _run_core(args, strategy_name: str = '') -> None:
         stop_map=stop_levels,
         qualified_set=qualified_set,
         show_recommendation_filters=show_filters,
+        adx_threshold=_adx_threshold,
+        strategy_name=strategy_name,
+        strategy_label=_strat_label,
     )
 
-    output_path = generator.generate_dashboard(
+    output_path, dashboard_entries = generator.generate_dashboard(
         symbols=symbols,
         output_path=args.output,
     )
+    for _e in dashboard_entries:
+        _e["_strategy"] = strategy_name
 
     logger.info("")
     logger.info("â Done. Open in your browser:")
     logger.info(f"   file://{output_path}")
     logger.info("")
+    return output_path, dashboard_entries
+
+
+def generate_combined_dashboard(
+    all_entries: list,
+    strategy_labels: Dict[str, str],
+    args,
+    project_root: Path,
+) -> Optional[str]:
+    """
+    Build a combined HTML dashboard from the raw entry lists of all strategies.
+    Adds a Strategy filter chip and prefixes chart/nav IDs with strategy name
+    to avoid collisions between same-symbol entries from different strategies.
+    Returns path to combined HTML.
+    """
+    if not all_entries or len(strategy_labels) < 2:
+        return None
+
+    # ── Prefix safe_ids with strategy name to avoid DOM collisions ────────────
+    import copy as _copy
+    prefixed_entries = []
+    for e in all_entries:
+        pe = _copy.copy(e)
+        strat = e.get("_strategy", "")
+        orig_sym = e["symbol"].replace(".", "_")
+        pe["_orig_safe_id"] = orig_sym
+        pe["_combined_id"]  = f"{strat}_{orig_sym}" if strat else orig_sym
+        # Re-badge with strategy label in subtitle
+        lbl = strategy_labels.get(strat, strat)
+        pe["_strategy_label"] = lbl
+        prefixed_entries.append(pe)
+
+    # ── Determine REPORTS_DIR for combined output ─────────────────────────────
+    out_dir = project_root / "reports" / "charts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = str(out_dir / f"technical_analysis_combined_{ts}.html")
+
+    # ── Build combined strategy badge ─────────────────────────────────────────
+    strat_labels_str = " + ".join(strategy_labels.values())
+
+    # ── Use TechnicalChartGenerator to build charts for combined view ─────────
+    # Load shared metadata/maps — these are strategy-agnostic
+    metadata = load_metadata()
+    ranked   = load_momentum_ranked()
+    momentum_map: Dict[str, float] = {}
+    for r in ranked:
+        if isinstance(r, dict) and "symbol" in r and "momentum_score" in r:
+            try:
+                momentum_map[r["symbol"]] = float(r["momentum_score"])
+            except (TypeError, ValueError):
+                pass
+
+    # ── Build charts per strategy and combine ─────────────────────────────────
+    import json as _json
+    combined_nav_html   = ""
+    combined_chart_divs = ""
+    combined_data_js    = "const CHART_DATA = {\n"
+    first_id            = None
+    entry_count         = 0
+
+    for pe in prefixed_entries:
+        strat      = pe.get("_strategy", "")
+        lbl        = pe.get("_strategy_label", strat)
+        combined_id = pe["_combined_id"]
+        orig_sym    = pe["_orig_safe_id"]
+        symbol      = pe["symbol"]
+        mom_val     = pe.get("momentum")
+        pos_cls     = "positive" if mom_val and mom_val > 0 else ("negative" if mom_val and mom_val < 0 else "neutral")
+        mom_disp    = f"{mom_val:+.1f}%" if mom_val is not None else "-"
+        badge       = "&#10003;" if pe.get("qualified") else "&#9711;"
+        cap_str     = pe.get("market_cap_fmt", "-")
+        exch        = pe.get("exchange", "").upper()
+        atype       = pe.get("asset_type", "stock")
+        rank        = pe.get("rank", "-")
+        name        = pe.get("name", symbol)
+        scenarios     = pe.get("_scenarios", [])
+        scenarios_str = " ".join(s for s in scenarios if s != "portfolio") if scenarios else ""
+        in_portfolio  = "yes" if "portfolio" in scenarios else "no"
+
+        if first_id is None:
+            first_id = combined_id
+
+        # Nav item — data-strategy attribute enables strategy filter
+        combined_nav_html += f"""
+            <div class="nav-item" id="nav-{combined_id}"
+                 data-symbol="{symbol}"
+                 data-name="{name.lower()}"
+                 data-sector="{pe.get('sector','').lower()}"
+                 data-exchange="{exch.lower()}"
+                 data-type="{atype}"
+                 data-scenarios="{scenarios_str}"
+                 data-portfolio="{in_portfolio}"
+                 data-strategy="{strat}"
+                 onclick="showChart('{combined_id}')">
+              <div class="nav-row1">
+                <span class="nav-rank">#{rank}</span>
+                <span class="nav-symbol">{badge} {symbol}</span>
+                <span class="mom-score {pos_cls}">{mom_disp}</span>
+              </div>
+              <div class="nav-name">{name[:30]} <span style="font-size:10px;opacity:0.6">[{lbl}]</span></div>
+              <div class="nav-row3">
+                <span class="nav-tag exch-tag">{exch}</span>
+                <span class="nav-tag type-tag">{atype.upper()}</span>
+                <span class="nav-cap">{cap_str}</span>
+              </div>
+            </div>"""
+
+        # Chart div
+        display = "block" if combined_id == first_id else "none"
+        combined_chart_divs += f"""
+            <div id="chart-{combined_id}" class="chart-wrapper" style="display:{display};">
+              <div id="plotly-{combined_id}" class="plotly-chart"></div>
+            </div>"""
+
+        # Chart data — reuse fig_json from original entry
+        combined_data_js += f'  "{combined_id}": {pe["fig_json"]},\n'
+        entry_count += 1
+
+    combined_data_js += "};\n"
+
+    # ── Build strategy filter chips ───────────────────────────────────────────
+    def _sc(val, lbl, active=False):
+        c2 = 'chip active' if active else 'chip'
+        return f'<button class="{c2}" data-filter="strategy" data-value="{val}" onclick="setFilter(\'strategy\',\'{val}\',this)">{lbl}</button>\n'
+    # No 'All' chip — strategy filter always selects exactly one strategy
+    first_strat    = next(iter(strategy_labels))
+    strat_chips_html = ""
+    for sn, lbl in strategy_labels.items():
+        strat_chips_html += _sc(sn, lbl, active=(sn == first_strat))
+    strategy_section_html = f"""
+    <div class="filter-section">
+      <div class="filter-label">Strategy</div>
+      <div class="chips" id="strategy-chips">
+        {strat_chips_html}
+      </div>
+    </div>"""
+
+    # ── Collect exchange/type chips from combined entries ─────────────────────
+    known_exchanges  = ["NASDAQ", "NYSE", "AS", "PA", "XETRA"]
+    present_exchanges = sorted(
+        {pe.get("exchange","").upper() for pe in prefixed_entries if pe.get("exchange")},
+        key=lambda x: (x not in known_exchanges, x),
+    )
+    exchange_chips = [ex for ex in known_exchanges if ex in present_exchanges]
+    exchange_chips += [ex for ex in present_exchanges if ex not in known_exchanges]
+
+    def _ec(val, lbl, active=False):
+        c2 = 'chip active' if active else 'chip'
+        return f'<button class="{c2}" data-filter="exchange" data-value="{val}" onclick="setFilter(\'exchange\',\'{val}\',this)">{lbl}</button>\n'
+    exch_chips_html = _ec('all', 'All', active=True)
+    for ex in exchange_chips:
+        exch_chips_html += _ec(ex.lower(), ex)
+
+    present_types = {pe.get("asset_type", "stock") for pe in prefixed_entries}
+    type_chips    = [t for t in ("stock", "etf", "crypto") if t in present_types]
+    type_chips   += [t for t in sorted(present_types) if t not in ("stock", "etf", "crypto")]
+
+    def _tc(val, lbl, active=False):
+        c2 = 'chip active' if active else 'chip'
+        return f'<button class="{c2}" data-filter="type" data-value="{val}" onclick="setFilter(\'type\',\'{val}\',this)">{lbl}</button>\n'
+    type_chips_html = _tc('all', 'All', active=True)
+    for t in type_chips:
+        lbl2 = t.upper() if t == 'etf' else t.capitalize()
+        type_chips_html += _tc(t, lbl2)
+
+    # ── Portfolio filter ──────────────────────────────────────────────────
+    has_portfolio = any('portfolio' in pe.get('_scenarios', []) for pe in prefixed_entries)
+    if has_portfolio:
+        def _pc(val, lbl, active=False):
+            c2 = 'chip active' if active else 'chip'
+            return f'<button class="{c2}" data-filter="portfolio" data-value="{val}" onclick="setFilter(\'portfolio\',\'{val}\',this)">{lbl}</button>\n'
+        portfolio_section_html = f'''
+    <div class="filter-section">
+      <div class="filter-label">Portfolio</div>
+      <div class="chips">{_pc('all','All',active=True)}{_pc('yes','In Portfolio')}{_pc('no','Not in Portfolio')}</div>
+    </div>'''
+    else:
+        portfolio_section_html = ''
+
+    # ── Recommendation (scenario) filter ─────────────────────────────────
+    all_scens = set()
+    for pe in prefixed_entries:
+        all_scens.update(s for s in pe.get('_scenarios', []) if s.startswith('scenario'))
+    scen_order  = {'scenario1': 1, 'scenario2': 2, 'scenario3': 3}
+    scen_labels = {'scenario1': 'Scenario 1', 'scenario2': 'Scenario 2', 'scenario3': 'Scenario 3'}
+    present_scens = sorted(all_scens, key=lambda s: scen_order.get(s, 99))
+    if present_scens:
+        def _rc(val, lbl, active=False):
+            c2 = 'chip active' if active else 'chip'
+            return f'<button class="{c2}" data-filter="scenario" data-value="{val}" onclick="setFilter(\'scenario\',\'{val}\',this)">{lbl}</button>\n'
+        scen_chips = _rc('all', 'All', active=True)
+        for s in present_scens:
+            scen_chips += _rc(s, scen_labels.get(s, s))
+        scenario_section_html = f'''
+    <div class="filter-section">
+      <div class="filter-label">Recommendation</div>
+      <div class="chips">{scen_chips}</div>
+    </div>'''
+    else:
+        scenario_section_html = ''
+
+    n_total = entry_count
+    n_qualified = sum(1 for pe in prefixed_entries if pe.get("qualified"))
+    ts_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # ── Write HTML (reuse same CSS/JS template, swap in combined data) ────────
+    # Build a minimal but functional single-file HTML
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Technical Analysis - Combined - {ts_str}</title>
+  <script src="{PLOTLY_CDN}"></script>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ display: flex; height: 100vh; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: {COLOURS["bg"]}; }}
+    #sidebar {{ width: 310px; min-width: 310px; background: {COLOURS["sidebar_bg"]}; display: flex; flex-direction: column; overflow: hidden; }}
+    #sidebar-header {{ padding: 14px 16px 10px; background: {COLOURS["header_bg"]}; }}
+    #sidebar-header h1 {{ font-size: 14px; font-weight: 700; color: #fff; }}
+    .stats {{ font-size: 11px; color: #94A3B8; margin-top: 4px; }}
+    .stats span {{ color: {COLOURS["accent"]}; font-weight: 600; }}
+    #search-box {{ padding: 8px 12px; background: {COLOURS["header_bg"]}; }}
+    #search-input {{ width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid #334155; background: #1E293B; color: #E2E8F0; font-size: 13px; outline: none; }}
+    .filter-section {{ padding: 6px 12px; border-bottom: 1px solid #1E293B; }}
+    .filter-label {{ font-size: 10px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }}
+    .chips {{ display: flex; flex-wrap: wrap; gap: 4px; }}
+    .chip {{ padding: 3px 8px; border-radius: 12px; border: 1px solid #334155; background: transparent; color: #94A3B8; font-size: 11px; cursor: pointer; transition: all 0.15s; }}
+    .chip.active {{ background: {COLOURS["accent"]}; border-color: {COLOURS["accent"]}; color: #fff; font-weight: 600; }}
+    #nav-list {{ flex: 1; overflow-y: auto; padding: 6px 0; }}
+    .nav-item {{ padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #1E293B; transition: background 0.12s; }}
+    .nav-item:hover {{ background: {COLOURS["sidebar_hover"]}; }}
+    .nav-item.active {{ background: #1a4eb5; border-left: 3px solid {COLOURS["accent"]}; }}
+    .nav-row1 {{ display: flex; align-items: center; justify-content: space-between; }}
+    .nav-rank {{ font-size: 10px; color: #475569; min-width: 28px; }}
+    .nav-symbol {{ font-size: 12px; font-weight: 600; color: #E2E8F0; flex: 1; }}
+    .mom-score {{ font-size: 12px; font-weight: 700; }}
+    .positive {{ color: {COLOURS["positive"]}; }}
+    .negative {{ color: {COLOURS["negative"]}; }}
+    .neutral  {{ color: {COLOURS["neutral"]}; }}
+    .nav-name {{ font-size: 11px; color: #94A3B8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .nav-row3 {{ display: flex; align-items: center; gap: 4px; margin-top: 3px; }}
+    .nav-tag {{ font-size: 9px; padding: 1px 5px; border-radius: 8px; background: #334155; color: #94A3B8; }}
+    .nav-cap {{ font-size: 10px; color: #64748B; margin-left: auto; }}
+    #no-results {{ display: none; padding: 20px; text-align: center; color: #64748B; font-size: 13px; }}
+    #main {{ flex: 1; display: flex; flex-direction: column; overflow: hidden; }}
+    #top-bar {{ padding: 10px 16px; background: #fff; border-bottom: 1px solid #E2E8F0; display: flex; align-items: center; justify-content: space-between; }}
+    .symbol-label {{ font-size: 15px; font-weight: 700; color: #1E293B; }}
+    .meta-label {{ font-size: 11px; color: #94A3B8; }}
+    #chart-area {{ flex: 1; overflow: hidden; background: {COLOURS["bg"]}; }}
+    .chart-wrapper {{ width: 100%; height: 100%; }}
+    .plotly-chart {{ width: 100%; height: 100%; }}
+  </style>
+</head>
+<body>
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>Technical Analysis &mdash; Combined</h1>
+    <div class="stats">{ts_str} &nbsp;|&nbsp; <span>{n_total}</span> charts &nbsp;|&nbsp; <span>{n_qualified}</span> qualified</div>
+  </div>
+  <div id="search-box">
+    <input id="search-input" type="text" placeholder="Search symbol, name or sector..." oninput="applyFilters()" autocomplete="off" />
+  </div>
+  {strategy_section_html}
+  {portfolio_section_html}
+  {scenario_section_html}
+  <div class="filter-section">
+    <div class="filter-label">Exchange</div>
+    <div class="chips">{exch_chips_html}</div>
+  </div>
+  <div class="filter-section">
+    <div class="filter-label">Type</div>
+    <div class="chips">{type_chips_html}</div>
+  </div>
+  <div id="nav-list">
+    {combined_nav_html}
+    <div id="no-results">No symbols match the current filters.</div>
+  </div>
+</div>
+<div id="main">
+  <div id="top-bar">
+    <span class="symbol-label" id="active-label">&#8592; Select a symbol</span>
+    <span class="meta-label">Combined &nbsp;|&nbsp; {strat_labels_str} &nbsp;|&nbsp; Architecture v3.9</span>
+  </div>
+  <div id="chart-area">
+    {combined_chart_divs}
+  </div>
+</div>
+<script>
+{combined_data_js}
+const first_strategy_default = "{first_strat}";
+const activeFilters = {{ exchange: "all", type: "all", strategy: first_strategy_default, portfolio: "all", scenario: "all" }};
+let activeId = null;
+
+function setFilter(dim, val, btn) {{
+  activeFilters[dim] = val;
+  const group = btn.closest(".chips");
+  group.querySelectorAll(".chip").forEach(function(b) {{ b.classList.remove("active"); }});
+  btn.classList.add("active");
+  applyFilters();
+}}
+
+function applyFilters() {{
+  const query    = document.getElementById("search-input").value.trim().toLowerCase();
+  const exchF    = activeFilters.exchange;
+  const typeF    = activeFilters.type;
+      const stratF   = activeFilters.strategy;
+    const portF    = activeFilters.portfolio;
+    const scenF    = activeFilters.scenario;
+  const items    = document.querySelectorAll(".nav-item");
+  let shown = 0;
+  items.forEach(function(el) {{
+    const sym   = (el.getAttribute("data-symbol") || "").toLowerCase();
+    const name  = (el.getAttribute("data-name")   || "").toLowerCase();
+    const sec   = (el.getAttribute("data-sector") || "").toLowerCase();
+    const exch  = (el.getAttribute("data-exchange") || "").toLowerCase();
+    const type  = (el.getAttribute("data-type")   || "").toLowerCase();
+    const strat = (el.getAttribute("data-strategy") || "");
+    const port  = (el.getAttribute("data-portfolio") || "no");
+    const scens = (el.getAttribute("data-scenarios") || "");
+    const textOk  = !query || sym.includes(query) || name.includes(query) || sec.includes(query);
+    const exchOk  = exchF  === "all" || exch  === exchF.toLowerCase();
+    const typeOk  = typeF  === "all" || type  === typeF.toLowerCase();
+    const stratOk = stratF === "all" || strat === stratF;
+    const portOk  = portF  === "all" || port  === portF;
+    const scenOk  = scenF  === "all" || scens.split(" ").includes(scenF);
+    const show = textOk && exchOk && typeOk && stratOk && portOk && scenOk;
+    el.style.display = show ? "" : "none";
+    if (show) shown++;
+  }});
+  document.getElementById("no-results").style.display = shown === 0 ? "block" : "none";
+  if (shown > 0 && (!activeId || document.getElementById("chart-" + activeId)?.style.display === "none")) {{
+    const first = document.querySelector(".nav-item:not([style*='none'])");
+    if (first) showChart(first.id.replace("nav-", ""));
+  }}
+}}
+
+function showChart(safeId) {{
+  if (activeId && activeId !== safeId) {{
+    const prev = document.getElementById("chart-" + activeId);
+    if (prev) prev.style.display = "none";
+    const prevNav = document.getElementById("nav-" + activeId);
+    if (prevNav) prevNav.classList.remove("active");
+  }}
+  const wrapper = document.getElementById("chart-" + safeId);
+  if (wrapper) {{
+    wrapper.style.display = "block";
+    if (!wrapper.querySelector(".plotly-chart").hasChildNodes()) {{
+      const data = CHART_DATA[safeId];
+      if (data) Plotly.newPlot("plotly-" + safeId, data.data, data.layout, {{responsive: true, displayModeBar: false}});
+    }}
+  }}
+  const navEl = document.getElementById("nav-" + safeId);
+  if (navEl) {{
+    navEl.classList.add("active");
+    const sym  = navEl.querySelector(".nav-symbol").textContent.trim();
+    const name = navEl.querySelector(".nav-name").textContent.trim();
+    document.getElementById("active-label").textContent = sym + "  —  " + name;
+  }}
+  activeId = safeId;
+}}
+
+window.addEventListener("load", function() {{
+  const first = document.querySelector(".nav-item");
+  if (first) showChart(first.id.replace("nav-", ""));
+}});
+</script>
+</body>
+</html>"""
+
+    Path(out_path).write_text(html, encoding="utf-8")
+    logger.info(f"Combined dashboard saved: {out_path}")
+    logger.info(f"  Total charts: {entry_count} ({', '.join(f'{sn}:{len([pe for pe in prefixed_entries if pe.get("_strategy")==sn])}' for sn in strategy_labels)})")
+    return out_path
+
+
 
 
 def main() -> int:
     args = parse_args()
+    global logger
+    logger = _setup_logging()
     logger.info("=" * 70)
-    logger.info("Script 15 -- Architecture v3.9 (Mar 2026)")
+    logger.info("Script 15 -- Technical Analysis Charts -- Architecture v3.9")
     logger.info("=" * 70)
 
     try:
@@ -2086,14 +2516,36 @@ def main() -> int:
     from datetime import datetime as _dt
     _start = _dt.now()
     failed = []
+    _strategy_outputs: Dict[str, str] = {}
+    _strategy_entries: Dict[str, list] = {}
     for strategy in strategies:
-        rc = _run_for_strategy(strategy, args)
-        if rc != 0:
+        result = _run_for_strategy(strategy, args)
+        if isinstance(result, tuple):
+            out_path, entries = result
+            _strategy_outputs[strategy.name] = out_path
+            _strategy_entries[strategy.name] = entries
+        elif result != 0:
             failed.append(strategy.name)
+
+    # Combined dashboard when 2+ strategies ran successfully
+    successful_names = [s.name for s in strategies
+                        if s.name not in failed and _strategy_outputs.get(s.name)]
+    if len(successful_names) >= 2:
+        combined_entries = []
+        combined_labels = {}
+        for sn in successful_names:
+            try:
+                from config.strategies import StrategyRegistry as _SR
+                combined_labels[sn] = _SR(project_root=PROJECT_ROOT).get(sn).label
+            except Exception:
+                combined_labels[sn] = sn
+            combined_entries.extend(_strategy_entries.get(sn, []))
+        combined = generate_combined_dashboard(combined_entries, combined_labels, args, PROJECT_ROOT)
+        if combined:
+            logger.info(f"Combined dashboard: file://{combined}")
 
     logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
     return 1 if failed else 0
-
 
 
 if __name__ == "__main__":

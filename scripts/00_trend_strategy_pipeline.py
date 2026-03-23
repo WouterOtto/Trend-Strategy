@@ -513,23 +513,30 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
             a += ["--benchmark", benchmark]
     
     # ── Scripts 16-21: Backtest & validation ──────────────────────────────────
-    if num in (16, 17, 18):
-        # Scripts 16-18: Backtest engine, walk-forward, monte carlo
+    if num in (16, 17):
+        # Scripts 16-17 only: Backtest engine + WFO take date range + equity args
+        # Script 18 (Monte Carlo) reads from backtest output files — no date args
         backtest_start = getattr(ns, "backtest_start", None)
         if backtest_start:
             a += ["--start-date", backtest_start]
-        
+
         backtest_end = getattr(ns, "backtest_end", None)
         if backtest_end:
             a += ["--end-date", backtest_end]
-        
+
         initial_equity = getattr(ns, "initial_equity", None)
         if initial_equity:
             a += ["--initial-equity", str(initial_equity)]
-        
+
         max_positions = getattr(ns, "max_positions", None)
         if max_positions:
             a += ["--max-positions", str(max_positions)]
+
+    if num == 18:
+        # Script 18 (Monte Carlo): only backtest-tag and output-tag are relevant
+        output_tag = getattr(ns, "output_tag", None) or getattr(ns, "backtest_tag", None)
+        if output_tag:
+            a += ["--output-tag", output_tag]
     
     elif num in (19, 20, 21):
         # Scripts 19-21: Validators and deployment decision

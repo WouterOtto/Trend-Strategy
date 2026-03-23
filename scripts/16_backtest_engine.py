@@ -1835,7 +1835,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-validation",    action="store_true",
                    help="Skip 10-test validation suite (faster in optimisation loops)")
     p.add_argument("--verbose",          action="store_true")
-    add_strategy_argument(parser)
+    add_strategy_argument(p)
     return p.parse_args()
 
 

@@ -1541,7 +1541,7 @@ def parse_args() -> argparse.Namespace:
         "--verbose", action="store_true",
         help="Enable DEBUG-level logging",
     )
-    add_strategy_argument(parser)
+    add_strategy_argument(p)
     return p.parse_args()
 
 
@@ -1654,7 +1654,7 @@ def run_monte_carlo(
 
 
 def main() -> int:
-    args = parse_arguments()
+    args = parse_args()
     logger.info("=" * 70)
     logger.info("Script 18 -- Architecture v3.9 (Mar 2026)")
     logger.info("=" * 70)
