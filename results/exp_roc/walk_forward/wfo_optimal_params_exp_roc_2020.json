@@ -1,0 +1,99 @@
+{
+  "recommended": {
+    "sma_slow": 250,
+    "trail_stop_mult": 5.0,
+    "max_positions": 40
+  },
+  "full_params": {
+    "sma_fast": 100,
+    "sma_slow": 250,
+    "adx_threshold": 25,
+    "adx_weak": 15.0,
+    "adx_weakness_days": 3,
+    "momentum_period": 250,
+    "init_stop_mult": 2.5,
+    "trail_stop_mult": 5.0,
+    "trail_activation": 0.08,
+    "max_positions": 40,
+    "risk_per_trade": 0.02,
+    "pos_floor_pct": 0.005,
+    "pos_ceil_pct": 0.08,
+    "limit_slip": 0.005,
+    "limit_cancel_days": 2,
+    "slippage_stock": 0.0005,
+    "slippage_crypto": 0.001,
+    "cost_bps": 10,
+    "initial_equity": 50000.0,
+    "cb_drawdown": -0.3,
+    "cb_recovery_pct": 0.05,
+    "cb_min_halt_days": 30,
+    "cb_vix_enter": 40.0,
+    "cb_vix_resume": 30.0,
+    "cb_vix_resume_days": 3,
+    "momentum_formula": "roc_weighted",
+    "roc_periods": [
+      20,
+      60,
+      120
+    ],
+    "roc_weights": [
+      0.2,
+      0.3,
+      0.5
+    ]
+  },
+  "median_oos_sharpe": 1.4547,
+  "top5_candidates": [
+    {
+      "params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 5.0,
+        "max_positions": 40
+      },
+      "median_oos_sharpe": 1.4547,
+      "adj_score": 1.4547,
+      "n_windows_selected": 1
+    },
+    {
+      "params": {
+        "sma_slow": 300,
+        "trail_stop_mult": 6.0,
+        "max_positions": 40
+      },
+      "median_oos_sharpe": 0.693,
+      "adj_score": 0.693,
+      "n_windows_selected": 1
+    },
+    {
+      "params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 4.0,
+        "max_positions": 50
+      },
+      "median_oos_sharpe": 0.2636,
+      "adj_score": 0.1636,
+      "n_windows_selected": 2
+    },
+    {
+      "params": {
+        "sma_slow": 300,
+        "trail_stop_mult": 4.5,
+        "max_positions": 40
+      },
+      "median_oos_sharpe": 0.09,
+      "adj_score": 0.09,
+      "n_windows_selected": 1
+    },
+    {
+      "params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 5.0,
+        "max_positions": 45
+      },
+      "median_oos_sharpe": -0.1876,
+      "adj_score": -0.1876,
+      "n_windows_selected": 1
+    }
+  ],
+  "selection_rationale": "Highest median OOS Sharpe after edge penalty adjustment. Stability ratio=0.179 (FAIL), OOS consistency=57.1% (FAIL)."
+}
