@@ -61,6 +61,7 @@ import sys
 import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
+import re
 import logging
 import argparse
 from datetime import datetime
@@ -2194,7 +2195,7 @@ def _dashboard_template_html() -> str:
     # It is identical in structure to the standalone dashboard HTML file
     # (trend_recommendation_dashboard.html) but with the static STRATEGIES
     # constant replaced by the /*INJECT_STRATEGIES*/ sentinel.
-    return r"""<!DOCTYPE html>
+    raw = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <!-- GENERATED_AT -->
@@ -2272,6 +2273,19 @@ body{font-family:var(--sans);background:var(--bg);color:var(--txt);font-size:13p
 .srow{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .scard{border-radius:var(--r);border:1px solid;padding:10px 12px;cursor:pointer;transition:opacity .15s}
 .scard:hover{opacity:.82}
+.srow.has-active .scard:not(.sc-active){opacity:.42;filter:saturate(0.5);transition:opacity .2s,filter .2s}
+.scard.sc-active{border-width:2px!important;position:relative}
+.scard.sc-active::after{content:'✓ SELECTED';position:absolute;top:8px;right:9px;font-family:var(--mono);font-size:8px;font-weight:600;padding:2px 6px;border-radius:3px;letter-spacing:.05em}
+.sc-s1.sc-active::after{background:var(--s1bg);color:var(--s1c);border:1px solid var(--s1bd)}
+.sc-s2.sc-active::after{background:var(--s2bg);color:var(--s2c);border:1px solid var(--s2bd)}
+.sc-s3.sc-active::after{background:var(--s3bg);color:var(--s3c);border:1px solid var(--s3bd)}
+.cmp-scen-wrap{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.cmp-sb{font-family:var(--mono);font-size:10px;font-weight:600;padding:4px 11px;border-radius:4px;border:1px solid var(--bd2);background:var(--bg3);color:var(--txt2);cursor:pointer;transition:all .15s;letter-spacing:.04em}
+.cmp-sb:hover{background:var(--bg4);color:var(--txt)}
+.cmp-sb.cs-s1{background:var(--s1bg);color:var(--s1c);border-color:var(--s1bd)}
+.cmp-sb.cs-s2{background:var(--s2bg);color:var(--s2c);border-color:var(--s2bd)}
+.cmp-sb.cs-s3{background:var(--s3bg);color:var(--s3c);border-color:var(--s3bd)}
+.cmp-lbl{font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
 .sc-s1{background:var(--s1bg);border-color:var(--s1bd)}.sc-s2{background:var(--s2bg);border-color:var(--s2bd)}.sc-s3{background:var(--s3bg);border-color:var(--s3bd)}
 .sc-name{font-family:var(--mono);font-size:11px;font-weight:600;margin-bottom:3px}
 .sc-s1 .sc-name{color:var(--s1c)}.sc-s2 .sc-name{color:var(--s2c)}.sc-s3 .sc-name{color:var(--s3c)}
@@ -2366,7 +2380,13 @@ td{padding:8px 9px;text-align:right;border-right:1px solid var(--bd);font-family
   <div id="cmp-view" class="hidden">
     <div class="cmp-banner">
       <div class="cmp-icon">&#8644;</div>
-      <div class="cmp-txt"><strong>Strategy comparison</strong> \u2014 symbols in <span style="color:var(--blue)">all strategies</span> are highlighted. Showing active scenario filter (S1/S2/S3/ANY).</div>
+      <div class="cmp-txt" style="flex:1"><strong>Strategy comparison</strong> &mdash; symbols in <span style="color:var(--blue)">all strategies</span> highlighted with <span class="cmp-both">ALL</span> badge.</div>
+      <div class="cmp-scen-wrap">
+        <span class="cmp-lbl">Scenario</span>
+        <button class="cmp-sb cs-s1" data-cs="S1" onclick="setCmpScen('S1')">S1</button>
+        <button class="cmp-sb" data-cs="S2" onclick="setCmpScen('S2')">S2</button>
+        <button class="cmp-sb" data-cs="S3" onclick="setCmpScen('S3')">S3</button>
+      </div>
     </div>
     <div class="cmp-grid" id="cmp-grid"></div>
   </div>
@@ -2454,7 +2474,7 @@ const SK=['scenario_1_pure_momentum','scenario_2_force_diversity','scenario_3_ba
 const SL=['S1','S2','S3'];
 const STCLS=['st1','st2','st3','st4','st5'];
 const BLIST=[{key:'portfolio_drawdown',lbl:'DD < \u221215%'},{key:'vix_spike',lbl:'VIX \u2265 40'},{key:'correlation_breakdown',lbl:'Corr > 0.85'},{key:'concentration_creep',lbl:'Top-3 > 30%'},{key:'data_staleness',lbl:'Data stale'}];
-let aS=0,showCmp=false,fA='ALL',fR='ALL',sortK='ao',sortD=1;
+let aS=0,showCmp=false,fA='ALL',fR='ALL',sortK='ao',sortD=1,cmpScen='S1';
 function init(){
   renderBar();switchStrat(0);
 }
@@ -2515,8 +2535,9 @@ function renderScenarios(s){
 }
 function toggleCmp(){showCmp=!showCmp;updCmpBtn();document.getElementById('cmp-view').classList.toggle('hidden',!showCmp);document.getElementById('single-view').classList.toggle('hidden',showCmp);if(showCmp)renderCmp();}
 function updCmpBtn(){const b=document.getElementById('cmp-btn');b.classList.toggle('active',showCmp);b.textContent=showCmp?'\u2715 Close Compare':'\u21c4 Compare Strategies';}
+function setCmpScen(s){cmpScen=s;document.querySelectorAll('.cmp-sb').forEach(b=>{b.className='cmp-sb';const idx=['S1','S2','S3'].indexOf(b.dataset.cs);if(b.dataset.cs===s&&idx>=0)b.classList.add('cs-s'+(idx+1));});renderCmp();}
 function renderCmp(){
-  const sl=fR==='ALL'||fR==='ANY'?'S1':fR;
+  const sl=cmpScen;
   const sk=SK[SL.indexOf(sl)]||SK[0];
   const maps=STRATEGIES.map(s=>{
     const sc=s.rec[sk]||{};const m={};
@@ -2542,7 +2563,7 @@ function renderCmp(){
   }).join('');
 }
 function sA(a){fA=a;document.querySelectorAll('#abtns .fb').forEach(b=>{b.className='fb';if(b.dataset.a===a){const m={ALL:'fa-all',MAND:'fa-mand',ROT:'fa-rot',BUY:'fa-buy',HOLD:'fa-hold'};b.classList.add(m[a]||'fa-all');}});R();}
-function sR(r){fR=r;document.querySelectorAll('#rbtns .fb').forEach(b=>{b.className='fb';if(b.dataset.r===r){const m={ALL:'fa-all',S1:'fr-s1',S2:'fr-s2',S3:'fr-s3',ANY:'fr-any'};b.classList.add(m[r]||'fa-all');}});R();if(showCmp)renderCmp();}
+function sR(r){fR=r;document.querySelectorAll('#rbtns .fb').forEach(b=>{b.className='fb';if(b.dataset.r===r){const m={ALL:'fa-all',S1:'fr-s1',S2:'fr-s2',S3:'fr-s3',ANY:'fr-any'};b.classList.add(m[r]||'fa-all');}});const srow=document.getElementById('srow');if(r==='ALL'||r==='ANY'){srow.classList.remove('has-active');document.querySelectorAll('.scard').forEach(c=>c.classList.remove('sc-active'));}else{srow.classList.add('has-active');document.querySelectorAll('.scard').forEach((c,i)=>c.classList.toggle('sc-active',SL[i]===r));}R();if(showCmp)renderCmp();}
 function srt(k){if(sortK===k)sortD*=-1;else{sortK=k;sortD=1;}document.querySelectorAll('th .sa').forEach(a=>a.textContent='\u21d5');const el=document.getElementById('a-'+k);if(el)el.textContent=sortD===1?'\u2191':'\u2193';R();}
 function buildRows(s){
   const rows={};const rcMap={};(s.rec.ranked_candidates||[]).forEach(r=>{rcMap[r.symbol]=r;});
@@ -2605,6 +2626,12 @@ init();
 </script>
 </body>
 </html>"""
+    # Decode \uXXXX escape sequences that raw strings preserve literally
+    return re.sub(
+        r'\\u([0-9a-fA-F]{4})',
+        lambda m: chr(int(m.group(1), 16)),
+        raw,
+    )
 
 
 def build_html_dashboard(
