@@ -65,7 +65,7 @@ import logging
 import argparse
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -2129,6 +2129,550 @@ def load_recommendations(json_path: Path) -> Dict:
 
 
 # ============================================================================
+# HTML DASHBOARD  (Script 12 combined output — one file for all strategies)
+# ============================================================================
+
+# Sentinel the template must contain where the JS strategies array is injected.
+_JS_SENTINEL = "/*INJECT_STRATEGIES*/"
+_TS_SENTINEL = "<!-- GENERATED_AT -->"
+
+
+def _formula_desc(formula: str, rec: Dict) -> str:
+    """Return human-readable formula description for the dashboard formula tag."""
+    if formula in ("sma_distance", "sma_dist"):
+        return "Score = (Close \u2212 SMA\u2082\u2080\u2080) / SMA\u2082\u2080\u2080 \u00d7 100"
+    if formula in ("roc_weighted", "roc_weight"):
+        mom = rec.get("momentum", {})
+        w   = mom.get("roc_weights", [0.20, 0.30, 0.50])
+        p   = mom.get("roc_periods", [20, 60, 120])
+        terms = " + ".join(f"{wi:.2f}\u00d7ROC{pi}" for wi, pi in zip(w, p))
+        return f"Score = {terms}"
+    return formula
+
+
+def _load_formula_from_strategy(strategy) -> str:
+    """
+    Read momentum.formula from the strategy's config JSON.
+    Falls back to 'sma_distance' if the file is absent or malformed.
+    """
+    try:
+        cfg_path = getattr(strategy, "config_path", None)
+        if cfg_path and Path(cfg_path).exists():
+            with open(cfg_path, encoding="utf-8") as fh:
+                cfg = json.load(fh)
+            return cfg.get("momentum", {}).get("formula", "sma_distance")
+    except Exception:
+        pass
+    return "sma_distance"
+
+
+def _slim_rec(rec: Dict) -> Dict:
+    """
+    Return a copy of *rec* stripped of large / verbose fields that the
+    dashboard does not use, keeping the JSON payload small.
+    """
+    drop = {"execution_checklist"}
+    slim = {k: v for k, v in rec.items() if k not in drop}
+    # Cap ranked_candidates at 50 rows
+    if "ranked_candidates" in slim:
+        slim["ranked_candidates"] = slim["ranked_candidates"][:50]
+    return slim
+
+
+def _dashboard_template_html() -> str:
+    """
+    Return the full dashboard HTML template as a Python string.
+
+    The template contains two sentinels:
+        /*INJECT_STRATEGIES*/   — replaced with the JS STRATEGIES array
+        <!-- GENERATED_AT -->   — replaced with a generation timestamp comment
+
+    This embeds the complete self-contained dashboard so Script 12 has
+    zero external file dependencies.
+    """
+    # The template is defined inline so the script is fully self-contained.
+    # It is identical in structure to the standalone dashboard HTML file
+    # (trend_recommendation_dashboard.html) but with the static STRATEGIES
+    # constant replaced by the /*INJECT_STRATEGIES*/ sentinel.
+    return r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- GENERATED_AT -->
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>TrendFollowing OS \u2014 Recommendation Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--bg4:#30363d;--bd:#30363d;--bd2:#444c56;--txt:#c9d1d9;--txt2:#8b949e;--txt3:#484f58;--blue:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#a371f7;--s1c:#58a6ff;--s1bg:#051d4d;--s1bd:#1f6feb;--s2c:#3fb950;--s2bg:#0d2a1e;--s2bd:#238636;--s3c:#a371f7;--s3bg:#1f1235;--s3bd:#6e40c9;--cm:#f85149;--cmbg:#3d1a1a;--cmbd:#8d1f1f;--cr:#d29922;--crbg:#2d2210;--crbd:#7a5d15;--cb2:#3fb950;--cb2bg:#0d2a1e;--cb2bd:#238636;--ch:#58a6ff;--chbg:#051d4d;--chbd:#1f6feb;--st1c:#e6b450;--st1bg:#1f1a09;--st1bd:#7a5d15;--st2c:#79c0ff;--st2bg:#031526;--st2bd:#0d5a9e;--st3c:#f778ba;--st3bg:#1f0a1a;--st3bd:#8d1f6e;--st4c:#56d364;--st4bg:#091a0e;--st4bd:#196c2e;--st5c:#d2a8ff;--st5bg:#1a0d2d;--st5bd:#6e40c9;--mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;--r:6px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--txt);font-size:13px;line-height:1.5;min-height:100vh}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
+.hdr{background:var(--bg2);border-bottom:1px solid var(--bd);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:300}
+.hdr-l{display:flex;align-items:center;gap:10px}
+.logo{width:26px;height:26px;background:linear-gradient(135deg,#1f6feb,#6e40c9);border-radius:5px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:600;color:#fff;flex-shrink:0}
+.hdr-t{font-family:var(--mono);font-size:12px;font-weight:500}.hdr-s{font-size:10px;color:var(--txt2);margin-top:1px}
+.hdr-r{display:flex;align-items:center;gap:14px}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--yellow);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.live-lbl{font-family:var(--mono);font-size:10px;color:var(--yellow);display:flex;align-items:center;gap:5px;letter-spacing:.05em}
+.hdr-m{font-family:var(--mono);font-size:10px;color:var(--txt2)}
+.strat-bar{background:var(--bg2);border-bottom:1px solid var(--bd);padding:0 18px;display:flex;align-items:stretch;gap:0;position:sticky;top:46px;z-index:200;overflow-x:auto}
+.stab{display:flex;align-items:center;gap:8px;padding:9px 16px 9px 12px;border-bottom:2px solid transparent;cursor:pointer;transition:all .15s;font-size:12px;color:var(--txt2);border-right:1px solid var(--bd);user-select:none;flex-shrink:0}
+.stab:hover{background:var(--bg3);color:var(--txt)}
+.stab.act-st1{border-bottom-color:var(--st1c);color:var(--st1c);background:var(--st1bg)}
+.stab.act-st2{border-bottom-color:var(--st2c);color:var(--st2c);background:var(--st2bg)}
+.stab.act-st3{border-bottom-color:var(--st3c);color:var(--st3c);background:var(--st3bg)}
+.stab.act-st4{border-bottom-color:var(--st4c);color:var(--st4c);background:var(--st4bg)}
+.stab.act-st5{border-bottom-color:var(--st5c);color:var(--st5c);background:var(--st5bg)}
+.stab-name{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.04em}
+.stab-label{font-size:10px;opacity:.8}
+.sbadge{font-family:var(--mono);font-size:8px;padding:1px 6px;border-radius:3px;margin-left:4px;border:1px solid}
+.sb-live{background:#071d0e;color:var(--green);border-color:#196c2e}
+.sb-paper{background:var(--crbg);color:var(--yellow);border-color:var(--crbd)}
+.stab-formula{font-family:var(--mono);font-size:9px;color:var(--txt3);margin-left:2px}
+.cmp-btn{font-family:var(--mono);font-size:10px;padding:5px 12px;border-radius:4px;border:1px solid var(--bd2);background:var(--bg3);color:var(--txt2);cursor:pointer;transition:all .15s;margin-left:auto;align-self:center;flex-shrink:0;letter-spacing:.03em}
+.cmp-btn:hover{border-color:var(--blue);color:var(--blue)}
+.cmp-btn.active{background:var(--s1bg);color:var(--blue);border-color:var(--blue)}
+.kstrip{background:var(--bg2);border-bottom:1px solid var(--bd);display:flex;overflow-x:auto;padding:0 18px}
+.k{padding:9px 16px 9px 0;border-right:1px solid var(--bd);margin-right:16px;flex-shrink:0}.k:last-child{border-right:none;margin-right:0}
+.kl{font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.07em}
+.kv{font-family:var(--mono);font-size:18px;font-weight:600;margin-top:1px}
+.ks{font-size:9px;color:var(--txt2);margin-top:1px}
+.c-blue{color:var(--blue)}.c-green{color:var(--green)}.c-yellow{color:var(--yellow)}.c-red{color:var(--red)}.c-s1{color:var(--s1c)}.c-s2{color:var(--s2c)}.c-s3{color:var(--s3c)}
+.main{padding:14px 18px}
+.sec{font-family:var(--mono);font-size:9px;font-weight:500;color:var(--txt2);letter-spacing:.1em;text-transform:uppercase;margin-bottom:7px;margin-top:2px}
+.cmp-banner{background:#071426;border:1px solid #0d5a9e;border-radius:var(--r);padding:10px 14px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px}
+.cmp-icon{font-family:var(--mono);font-size:14px;color:var(--blue);flex-shrink:0}
+.cmp-txt{font-size:11px;color:var(--txt2);line-height:1.6}.cmp-txt strong{color:var(--txt)}
+.hidden{display:none!important}
+.cmp-grid{display:grid;gap:10px;margin-bottom:12px}
+.cmp-col{border:1px solid var(--bd);border-radius:var(--r);overflow:hidden}
+.cmp-col-hdr{padding:8px 12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;display:flex;align-items:center;gap:8px}
+.ch-st1{background:var(--st1bg);color:var(--st1c);border-bottom:1px solid var(--st1bd)}
+.ch-st2{background:var(--st2bg);color:var(--st2c);border-bottom:1px solid var(--st2bd)}
+.ch-st3{background:var(--st3bg);color:var(--st3c);border-bottom:1px solid var(--st3bd)}
+.ch-st4{background:var(--st4bg);color:var(--st4c);border-bottom:1px solid var(--st4bd)}
+.ch-st5{background:var(--st5bg);color:var(--st5c);border-bottom:1px solid var(--st5bd)}
+.cmp-sym-list{padding:8px 12px;display:flex;flex-direction:column;gap:3px;max-height:320px;overflow-y:auto}
+.cmp-row{display:flex;align-items:center;justify-content:space-between;padding:3px 6px;border-radius:4px;font-size:11px}
+.cmp-row.both{background:#0d1a2d;border:1px solid #1f3a6e}
+.cmp-row.unique{background:var(--bg3)}
+.cmp-sym{font-family:var(--mono);font-weight:500}
+.cmp-both{font-family:var(--mono);font-size:8px;padding:1px 5px;border-radius:3px;background:#0d1a2d;color:var(--blue);border:1px solid #1f6feb}
+.cmp-act{font-family:var(--mono);font-size:9px}
+.act-buy{color:var(--green)}.act-hold{color:var(--blue)}.act-exit{color:var(--red)}.act-rot{color:var(--yellow)}
+.cbp{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:11px 13px;margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.cb-box{flex-shrink:0;display:flex;align-items:center;gap:7px}
+.cb-dot{width:9px;height:9px;border-radius:50%}.cb-clear{background:var(--green)}.cb-warn{background:var(--yellow)}.cb-halt{background:var(--red)}
+.cb-t{font-family:var(--mono);font-size:11px;font-weight:500}
+.cb-sep{width:1px;background:var(--bd);align-self:stretch;flex-shrink:0}
+.cb-items{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.cbi{padding:2px 8px;border-radius:4px;font-size:10px;border:1px solid;font-family:var(--mono);display:flex;align-items:center;gap:4px}
+.cbi-ok{background:#071d0e;border-color:#196c2e;color:var(--green)}.cbi-warn{background:var(--crbg);border-color:var(--crbd);color:var(--yellow)}.cbi-crit{background:var(--cmbg);border-color:var(--cmbd);color:var(--red)}
+.cbi-d{width:4px;height:4px;border-radius:50%;flex-shrink:0}
+.srow{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.scard{border-radius:var(--r);border:1px solid;padding:10px 12px;cursor:pointer;transition:opacity .15s}
+.scard:hover{opacity:.82}
+.sc-s1{background:var(--s1bg);border-color:var(--s1bd)}.sc-s2{background:var(--s2bg);border-color:var(--s2bd)}.sc-s3{background:var(--s3bg);border-color:var(--s3bd)}
+.sc-name{font-family:var(--mono);font-size:11px;font-weight:600;margin-bottom:3px}
+.sc-s1 .sc-name{color:var(--s1c)}.sc-s2 .sc-name{color:var(--s2c)}.sc-s3 .sc-name{color:var(--s3c)}
+.sc-phil{font-size:10px;color:var(--txt2);line-height:1.5;margin-bottom:6px}
+.sc-stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.sc-stat{font-size:10px;color:var(--txt2)}.sc-stat span{font-family:var(--mono);font-weight:500}
+.sc-s1 .sc-stat span{color:var(--s1c)}.sc-s2 .sc-stat span{color:var(--s2c)}.sc-s3 .sc-stat span{color:var(--s3c)}
+.sc-pills{display:flex;gap:4px;flex-wrap:wrap}
+.spill{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;border:1px solid}
+.sp-mand{background:var(--cmbg);color:var(--cm);border-color:var(--cmbd)}.sp-rot{background:var(--crbg);color:var(--cr);border-color:var(--crbd)}.sp-buy{background:var(--cb2bg);color:var(--cb2);border-color:var(--cb2bd)}.sp-hold{background:var(--chbg);color:var(--ch);border-color:var(--chbd)}.sp-warn{background:#2d1c08;color:var(--yellow);border-color:#7a5d15}
+.ftag{font-family:var(--mono);font-size:9px;padding:3px 10px;border-radius:3px;border:1px solid;margin-bottom:10px;display:inline-flex;align-items:center;gap:6px}
+.ft-dot{width:5px;height:5px;border-radius:50%}
+.ft-st1{background:var(--st1bg);color:var(--st1c);border-color:var(--st1bd)}.ft-st2{background:var(--st2bg);color:var(--st2c);border-color:var(--st2bd)}.ft-st3{background:var(--st3bg);color:var(--st3c);border-color:var(--st3bd)}.ft-st4{background:var(--st4bg);color:var(--st4c);border-color:var(--st4bd)}.ft-st5{background:var(--st5bg);color:var(--st5c);border-color:var(--st5bd)}
+.fbar{display:flex;gap:7px;margin-bottom:9px;flex-wrap:wrap;align-items:center}
+.fl{font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
+select,input[type=text]{background:var(--bg2);border:1px solid var(--bd);border-radius:5px;color:var(--txt);font-family:var(--mono);font-size:11px;padding:4px 7px;outline:none;cursor:pointer;transition:border-color .15s}
+select:hover,input[type=text]:hover{border-color:var(--bd2)}select:focus,input[type=text]:focus{border-color:var(--blue)}
+input[type=text]{width:140px}
+.fsep{width:1px;height:20px;background:var(--bd);margin:0 2px}
+.fbtns{display:flex;gap:3px}
+.fb{font-family:var(--mono);font-size:9px;font-weight:500;padding:3px 8px;border-radius:4px;border:1px solid var(--bd2);background:var(--bg2);color:var(--txt2);cursor:pointer;transition:all .15s;letter-spacing:.04em}
+.fb:hover{background:var(--bg3);color:var(--txt)}
+.fb.fa-all{background:var(--bg4);color:var(--txt);border-color:var(--bd2)}.fb.fa-mand{background:var(--cmbg);color:var(--cm);border-color:var(--cmbd)}.fb.fa-rot{background:var(--crbg);color:var(--cr);border-color:var(--crbd)}.fb.fa-buy{background:var(--cb2bg);color:var(--cb2);border-color:var(--cb2bd)}.fb.fa-hold{background:var(--chbg);color:var(--ch);border-color:var(--chbd)}
+.fb.fr-s1{background:var(--s1bg);color:var(--s1c);border-color:var(--s1bd)}.fb.fr-s2{background:var(--s2bg);color:var(--s2c);border-color:var(--s2bd)}.fb.fr-s3{background:var(--s3bg);color:var(--s3c);border-color:var(--s3bd)}.fb.fr-any{background:#1c1c24;color:#c7a9f8;border-color:#6e40c9}
+.rct{font-size:10px;color:var(--txt2);font-family:var(--mono);margin-left:auto}.rct span{color:var(--txt);font-weight:500}
+.leg{display:flex;gap:12px;margin-bottom:9px;padding:7px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);font-size:10px;align-items:center;flex-wrap:wrap}
+.leg-d{width:7px;height:7px;border-radius:2px;flex-shrink:0}.leg-i{display:flex;align-items:center;gap:5px;color:var(--txt2)}.leg-t{color:var(--txt);font-weight:500}
+.tw{overflow-x:auto;border-radius:var(--r);border:1px solid var(--bd)}
+table{width:100%;border-collapse:collapse;font-size:11px}
+thead tr{background:var(--bg2);border-bottom:1px solid var(--bd)}
+th{font-family:var(--mono);font-size:9px;font-weight:500;color:var(--txt2);letter-spacing:.07em;text-transform:uppercase;padding:7px 9px;text-align:right;white-space:nowrap;border-right:1px solid var(--bd);cursor:pointer;user-select:none}
+th.tl{text-align:left}th:last-child{border-right:none}th:hover{color:var(--txt)}th .sa{margin-left:2px;opacity:.3}
+tbody tr{border-bottom:1px solid var(--bd);transition:background .1s}tbody tr:last-child{border-bottom:none}tbody tr:hover{filter:brightness(1.12)}
+.row-mand{background:#160a0a}.row-rot{background:#14120a}.row-buy{background:#091410}.row-hold{background:#070e18}
+td{padding:8px 9px;text-align:right;border-right:1px solid var(--bd);font-family:var(--mono);font-size:11px;white-space:nowrap;vertical-align:middle}td:last-child{border-right:none}td.tl{text-align:left;font-family:var(--sans)}
+.chip{display:inline-block;font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;border:1px solid;letter-spacing:.05em}
+.ch-mand{background:var(--cmbg);color:var(--cm);border-color:var(--cmbd)}.ch-rot{background:var(--crbg);color:var(--cr);border-color:var(--crbd)}.ch-buy{background:var(--cb2bg);color:var(--cb2);border-color:var(--cb2bd)}.ch-hold{background:var(--chbg);color:var(--ch);border-color:var(--chbd)}
+.sba{display:flex;gap:3px}
+.sb{font-family:var(--mono);font-size:8px;font-weight:500;padding:1px 5px;border-radius:3px;border:1px solid}
+.sb-s1{background:var(--s1bg);color:var(--s1c);border-color:var(--s1bd)}.sb-s2{background:var(--s2bg);color:var(--s2c);border-color:var(--s2bd)}.sb-s3{background:var(--s3bg);color:var(--s3c);border-color:var(--s3bd)}
+.rt{font-family:var(--mono);font-size:9px;padding:1px 6px;border-radius:3px;border:1px solid}
+.rt-stop{color:var(--red);background:var(--cmbg);border-color:var(--cmbd)}.rt-rev{color:#ff8080;background:#3d1010;border-color:#8d2020}.rt-weak{color:var(--yellow);background:var(--crbg);border-color:var(--crbd)}.rt-drop{color:#c9a020;background:var(--crbg);border-color:var(--crbd)}
+.sym{font-family:var(--mono);font-weight:500;color:var(--txt);font-size:12px}.snm{font-size:10px;color:var(--txt2);max-width:130px;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.ap{font-family:var(--mono);font-size:8px;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--txt2);border:1px solid var(--bd);margin-left:3px}
+.sbw{display:flex;align-items:center;gap:5px;justify-content:flex-end}
+.sb-bg{width:48px;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden}
+.sb-f{height:100%;border-radius:2px}
+.sf-st1{background:linear-gradient(90deg,#7a5d15,#e6b450)}.sf-st2{background:linear-gradient(90deg,#0d5a9e,#79c0ff)}.sf-st3{background:linear-gradient(90deg,#8d1f6e,#f778ba)}.sf-st4{background:linear-gradient(90deg,#196c2e,#56d364)}.sf-st5{background:linear-gradient(90deg,#6e40c9,#d2a8ff)}
+.adxw{display:flex;align-items:center;gap:4px;justify-content:flex-end}
+.adxp{width:5px;height:5px;border-radius:50%}.adxs{background:var(--green)}.adxm{background:var(--yellow)}.adxw2{background:var(--red)}
+.stw{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.stb{font-size:8px;padding:1px 4px;border-radius:2px;font-family:var(--mono)}
+.st-init{background:var(--bg3);color:var(--txt2)}.st-trail{background:#1f1235;color:var(--purple);border:1px solid #6e40c9}
+.prio{font-family:var(--mono);font-size:8px;padding:1px 4px;border-radius:3px}
+.p1{background:#3d1a1a;color:#ff6b6b;border:1px solid #8d1f1f}.p2{background:#2d1a0a;color:#e8a23b;border:1px solid #7a5d15}.p3{background:var(--crbg);color:var(--yellow);border:1px solid var(--crbd)}.p4{background:var(--bg3);color:var(--txt2);border:1px solid var(--bd)}
+.ot{font-family:var(--mono);font-size:8px;color:var(--txt3)}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.empty{text-align:center;padding:40px;color:var(--txt2);font-size:12px}
+.empty-i{display:block;font-family:var(--mono);font-size:22px;color:var(--txt3);margin-bottom:6px}
+.ftr{margin-top:16px;padding:10px 18px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;font-size:9px;color:var(--txt3);font-family:var(--mono);flex-wrap:wrap;gap:4px}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-l">
+    <div class="logo">TF</div>
+    <div>
+      <div class="hdr-t">TrendFollowing OS \u00b7 Monthly Rebalancing Dashboard</div>
+      <div class="hdr-s">Script 12 output \u00b7 Multi-strategy view \u00b7 Human approval required before execution</div>
+    </div>
+  </div>
+  <div class="hdr-r">
+    <div class="live-lbl"><div class="live-dot"></div><span id="deploy-lbl">PAPER TRADING</span></div>
+    <div class="hdr-m" id="hdr-m">\u2014</div>
+  </div>
+</div>
+<div class="strat-bar" id="strat-bar">
+  <button class="cmp-btn" id="cmp-btn" onclick="toggleCmp()">&#8644; Compare Strategies</button>
+</div>
+<div class="kstrip">
+  <div class="k"><div class="kl">Account Equity</div><div class="kv c-blue" id="kv-eq">\u2014</div><div class="ks">EUR</div></div>
+  <div class="k"><div class="kl">Trend Qualified</div><div class="kv c-green" id="kv-q">\u2014</div><div class="ks">pass SMA+ADX gate</div></div>
+  <div class="k"><div class="kl">Max Positions</div><div class="kv" id="kv-mp">\u2014</div><div class="ks">at this equity</div></div>
+  <div class="k"><div class="kl">Mandatory Exits</div><div class="kv c-red" id="kv-me">\u2014</div><div class="ks">P1\u20133: stop/rev/weak</div></div>
+  <div class="k"><div class="kl">S1 Entries</div><div class="kv c-s1" id="kv-e1">\u2014</div><div class="ks">pure momentum</div></div>
+  <div class="k"><div class="kl">S2 Entries</div><div class="kv c-s2" id="kv-e2">\u2014</div><div class="ks">force diversity</div></div>
+  <div class="k"><div class="kl">S3 Entries</div><div class="kv c-s3" id="kv-e3">\u2014</div><div class="ks">balanced</div></div>
+  <div class="k"><div class="kl">Circuit Breakers</div><div class="kv" id="kv-cb" style="font-size:13px">\u2014</div><div class="ks" id="ks-cb">\u2014</div></div>
+  <div class="k"><div class="kl">Execution Date</div><div class="kv" id="kv-ed" style="font-size:12px">\u2014</div><div class="ks">first trading day</div></div>
+</div>
+<div class="main">
+  <div id="cmp-view" class="hidden">
+    <div class="cmp-banner">
+      <div class="cmp-icon">&#8644;</div>
+      <div class="cmp-txt"><strong>Strategy comparison</strong> \u2014 symbols in <span style="color:var(--blue)">all strategies</span> are highlighted. Showing active scenario filter (S1/S2/S3/ANY).</div>
+    </div>
+    <div class="cmp-grid" id="cmp-grid"></div>
+  </div>
+  <div id="single-view">
+    <div id="ftag-wrap"></div>
+    <div class="sec">Circuit Breaker Status</div>
+    <div class="cbp" id="cbp">
+      <div class="cb-box"><div class="cb-dot" id="cb-dot"></div><div class="cb-t" id="cb-t">\u2014</div></div>
+      <div class="cb-sep"></div>
+      <div class="cb-items" id="cb-items"></div>
+    </div>
+    <div class="sec">Three-scenario comparison \u2014 click to filter table</div>
+    <div class="srow" id="srow"></div>
+    <div class="fbar">
+      <div class="fl">Search</div>
+      <input type="text" id="srch" placeholder="symbol or name\u2026" oninput="R()"/>
+      <div class="fsep"></div>
+      <div class="fl">Action</div>
+      <div class="fbtns" id="abtns">
+        <button class="fb fa-all" data-a="ALL" onclick="sA('ALL',this)">ALL</button>
+        <button class="fb" data-a="MAND" onclick="sA('MAND',this)">Mandatory Exit</button>
+        <button class="fb" data-a="ROT" onclick="sA('ROT',this)">Rotation Exit</button>
+        <button class="fb" data-a="BUY" onclick="sA('BUY',this)">New Entry</button>
+        <button class="fb" data-a="HOLD" onclick="sA('HOLD',this)">Hold</button>
+      </div>
+      <div class="fsep"></div>
+      <div class="fl">Scenario</div>
+      <div class="fbtns" id="rbtns">
+        <button class="fb fa-all" data-r="ALL" onclick="sR('ALL',this)">ALL</button>
+        <button class="fb" data-r="S1" onclick="sR('S1',this)">S1</button>
+        <button class="fb" data-r="S2" onclick="sR('S2',this)">S2</button>
+        <button class="fb" data-r="S3" onclick="sR('S3',this)">S3</button>
+        <button class="fb" data-r="ANY" onclick="sR('ANY',this)">Any</button>
+      </div>
+      <div class="fsep"></div>
+      <div class="fl">Exchange</div>
+      <select id="fex" onchange="R()">
+        <option value="ALL">All</option>
+        <option>NYSE</option><option>NASDAQ</option><option>XETRA</option>
+        <option>LSE</option><option>EURONEXT</option><option>CRYPTO</option>
+      </select>
+      <div class="rct" id="rct"><span>\u2014</span> rows</div>
+    </div>
+    <div class="leg">
+      <span class="leg-t">Action:</span>
+      <div class="leg-i"><div class="leg-d" style="background:var(--cm)"></div>Mandatory Exit (P1 stop \u00b7 P2 death cross \u00b7 P3 ADX weak)</div>
+      <div class="leg-i"><div class="leg-d" style="background:var(--cr)"></div>Rotation Exit (P4 rank drop)</div>
+      <div class="leg-i"><div class="leg-d" style="background:var(--cb2)"></div>New Entry (limit close+0.5%)</div>
+      <div class="leg-i"><div class="leg-d" style="background:var(--ch)"></div>Hold</div>
+      <span style="margin-left:8px" class="leg-t">Scenario:</span>
+      <div class="leg-i"><span class="sb sb-s1">S1</span>Pure Momentum</div>
+      <div class="leg-i"><span class="sb sb-s2">S2</span>Force Diversity</div>
+      <div class="leg-i"><span class="sb sb-s3">S3</span>Balanced</div>
+    </div>
+    <div class="tw">
+      <table>
+        <thead><tr>
+          <th class="tl" onclick="srt('rank')"># <span class="sa" id="a-rank">\u21d5</span></th>
+          <th class="tl" style="min-width:150px">Symbol</th>
+          <th class="tl">Action</th>
+          <th class="tl">Reason / Order</th>
+          <th class="tl">Scenarios</th>
+          <th class="tl">Exch</th>
+          <th onclick="srt('momentum_score')">Score <span class="sa" id="a-momentum_score">\u21d5</span></th>
+          <th onclick="srt('adx')">ADX <span class="sa" id="a-adx">\u21d5</span></th>
+          <th onclick="srt('atrP')">ATR% <span class="sa" id="a-atrP">\u21d5</span></th>
+          <th>Entry / Stop</th>
+          <th onclick="srt('position_pct')">Pos% <span class="sa" id="a-position_pct">\u21d5</span></th>
+          <th onclick="srt('pnl')">P&amp;L <span class="sa" id="a-pnl">\u21d5</span></th>
+          <th onclick="srt('roc_60d')">60d Ret <span class="sa" id="a-roc_60d">\u21d5</span></th>
+        </tr></thead>
+        <tbody id="tb"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="ftr">
+  <div>TrendFollowing OS v3.9 \u00b7 Script 12 HTML Output \u00b7 Architecture v3.2</div>
+  <div id="ftr-formula">\u2014</div>
+  <div>\u26a0 HUMAN APPROVAL REQUIRED \u00b7 Exits first \u2192 Entries \u00b7 Script 12 also generates PDF</div>
+</div>
+<script>
+const STRATEGIES=/*INJECT_STRATEGIES*/;
+const SK=['scenario_1_pure_momentum','scenario_2_force_diversity','scenario_3_balanced'];
+const SL=['S1','S2','S3'];
+const STCLS=['st1','st2','st3','st4','st5'];
+const BLIST=[{key:'portfolio_drawdown',lbl:'DD < \u221215%'},{key:'vix_spike',lbl:'VIX \u2265 40'},{key:'correlation_breakdown',lbl:'Corr > 0.85'},{key:'concentration_creep',lbl:'Top-3 > 30%'},{key:'data_staleness',lbl:'Data stale'}];
+let aS=0,showCmp=false,fA='ALL',fR='ALL',sortK='ao',sortD=1;
+function init(){
+  renderBar();switchStrat(0);
+}
+function renderBar(){
+  const bar=document.getElementById('strat-bar');
+  const btn=document.getElementById('cmp-btn');
+  [...bar.querySelectorAll('.stab')].forEach(e=>e.remove());
+  STRATEGIES.forEach((s,i)=>{
+    const t=document.createElement('div');t.className='stab';t.id='stab-'+i;
+    t.innerHTML=`<div><div style="display:flex;align-items:center;gap:6px"><span class="stab-name">${s.name}</span><span class="sbadge ${s.deployed?'sb-live':'sb-paper'}">${s.deployed?'LIVE':'PAPER'}</span></div><div style="display:flex;align-items:center;gap:5px;margin-top:2px"><span class="stab-label">${s.label}</span><span class="stab-formula">${s.formula}</span></div></div>`;
+    t.onclick=()=>{showCmp=false;updCmpBtn();document.getElementById('cmp-view').classList.add('hidden');document.getElementById('single-view').classList.remove('hidden');switchStrat(i);};
+    bar.insertBefore(t,btn);
+  });
+}
+function switchStrat(i){
+  aS=i;const s=STRATEGIES[i];const cls=STCLS[i]||'st1';
+  STRATEGIES.forEach((_,j)=>{const t=document.getElementById('stab-'+j);if(t){t.className='stab';if(j===i)t.classList.add('act-'+cls);}});
+  const rec=s.rec;
+  document.getElementById('hdr-m').textContent='Run: '+rec.rebalance_date+' \u00b7 Exec: '+rec.execution_date+' \u00b7 '+rec.architecture_version;
+  document.getElementById('deploy-lbl').textContent=s.deployed?'LIVE':'PAPER TRADING';
+  document.getElementById('deploy-lbl').style.color=s.deployed?'var(--green)':'var(--yellow)';
+  document.getElementById('kv-eq').textContent='\u20ac'+(rec.account_equity||0).toLocaleString('de-DE');
+  document.getElementById('kv-q').textContent=(rec.universe||{}).total_qualified||'\u2014';
+  document.getElementById('kv-mp').textContent=rec.max_positions||'\u2014';
+  const s1=rec[SK[0]]||{};
+  document.getElementById('kv-me').textContent=((s1.exits||{}).mandatory||[]).length;
+  document.getElementById('kv-e1').textContent=((rec[SK[0]]||{}).entries||{}).total||0;
+  document.getElementById('kv-e2').textContent=((rec[SK[1]]||{}).entries||{}).total||0;
+  document.getElementById('kv-e3').textContent=((rec[SK[2]]||{}).entries||{}).total||0;
+  document.getElementById('kv-ed').textContent=rec.execution_date||'\u2014';
+  document.getElementById('ftag-wrap').innerHTML=`<div class="ftag ft-${cls}"><div class="ft-dot" style="background:var(--${cls}c)"></div><strong>${s.name}</strong>&nbsp;\u00b7&nbsp;${s.formula}&nbsp;\u00b7&nbsp;${s.formula_desc}${s.roc_weights?' \u00b7 weights: ['+s.roc_weights.join(', ')+']':''}</div>`;
+  document.getElementById('ftr-formula').textContent=s.formula_desc;
+  renderCB((rec.circuit_breakers||{}));
+  renderScenarios(s);
+  R();
+  if(showCmp)renderCmp();
+}
+function renderCB(cb){
+  const dot=document.getElementById('cb-dot'),t=document.getElementById('cb-t');
+  const kv=document.getElementById('kv-cb'),ks=document.getElementById('ks-cb');
+  if(cb.halt_all){dot.className='cb-dot cb-halt';t.textContent='HALT ALL';t.style.color='var(--red)';kv.textContent='HALT';kv.className='kv c-red';ks.textContent='all suspended';}
+  else if(cb.halt_entries){dot.className='cb-dot cb-warn';t.textContent='ENTRIES HALTED';t.style.color='var(--yellow)';kv.textContent='WARN';kv.className='kv c-yellow';ks.textContent='exits only';}
+  else{dot.className='cb-dot cb-clear';t.textContent='All clear';t.style.color='var(--green)';kv.textContent='CLEAR';kv.className='kv c-green';ks.textContent=(cb.breakers||[]).length+' triggered';}
+  const trg=new Set((cb.breakers||[]).map(b=>b.breaker));
+  document.getElementById('cb-items').innerHTML=BLIST.map(b=>{
+    if(trg.has(b.key)){const bd=(cb.breakers||[]).find(x=>x.breaker===b.key)||{};const c=bd.severity==='CRITICAL'?'cbi-crit':'cbi-warn';return`<div class="cbi ${c}"><div class="cbi-d ${c==='cbi-crit'?'cb-halt':'cb-warn'}"></div>${b.lbl}</div>`;}
+    return`<div class="cbi cbi-ok"><div class="cbi-d cb-clear"></div>${b.lbl}</div>`;
+  }).join('');
+}
+function renderScenarios(s){
+  const cls=['sc-s1','sc-s2','sc-s3'];
+  document.getElementById('srow').innerHTML=SK.map((k,i)=>{
+    const sc=s.rec[k]||{};const cs=sc.capital_summary||{};
+    const m=((sc.exits||{}).mandatory||[]).length,ro=((sc.exits||{}).rotation||[]).length;
+    const en=((sc.entries||{}).total||0),ho=((sc.holds||{}).total||0),wn=((sc.warnings)||[]).length;
+    return`<div class="scard ${cls[i]}" onclick="sR('${SL[i]}',null)"><div class="sc-name">${SL[i]} \u00b7 ${sc.name||SL[i]}</div><div class="sc-phil">${sc.philosophy||''}</div><div class="sc-stats"><div class="sc-stat">Deployed <span>${(cs.total_deployed_after_pct||0).toFixed(1)}%</span></div><div class="sc-stat">Cash <span>${(cs.cash_remaining_approx_pct||0).toFixed(1)}%</span></div><div class="sc-stat">Pool <span>${sc.candidate_pool||'?'}</span></div></div><div class="sc-pills">${m?`<span class="spill sp-mand">${m} mand exit</span>`:''}${ro?`<span class="spill sp-rot">${ro} rot exit</span>`:''}${en?`<span class="spill sp-buy">${en} entry</span>`:''}${ho?`<span class="spill sp-hold">${ho} hold</span>`:''}${wn?`<span class="spill sp-warn">\u26a0 ${wn}</span>`:''}</div></div>`;
+  }).join('');
+}
+function toggleCmp(){showCmp=!showCmp;updCmpBtn();document.getElementById('cmp-view').classList.toggle('hidden',!showCmp);document.getElementById('single-view').classList.toggle('hidden',showCmp);if(showCmp)renderCmp();}
+function updCmpBtn(){const b=document.getElementById('cmp-btn');b.classList.toggle('active',showCmp);b.textContent=showCmp?'\u2715 Close Compare':'\u21c4 Compare Strategies';}
+function renderCmp(){
+  const sl=fR==='ALL'||fR==='ANY'?'S1':fR;
+  const sk=SK[SL.indexOf(sl)]||SK[0];
+  const maps=STRATEGIES.map(s=>{
+    const sc=s.rec[sk]||{};const m={};
+    ((sc.exits||{}).mandatory||[]).forEach(e=>{m[e.symbol]='EXIT';});
+    ((sc.exits||{}).rotation||[]).forEach(e=>{m[e.symbol]='ROT';});
+    ((sc.entries||{}).new||[]).forEach(e=>{m[e.symbol]='BUY';});
+    ((sc.holds||{}).positions||[]).forEach(h=>{m[h.symbol]='HOLD';});
+    return m;
+  });
+  const allSyms=[...new Set(STRATEGIES.flatMap((_,i)=>Object.keys(maps[i])))].sort();
+  const inAll=sym=>STRATEGIES.every((_,i)=>maps[i][sym]);
+  const ncols=STRATEGIES.length;
+  document.getElementById('cmp-grid').style.gridTemplateColumns=`repeat(${Math.min(ncols,4)},1fr)`;
+  document.getElementById('cmp-grid').innerHTML=STRATEGIES.map((s,si)=>{
+    const cls=STCLS[si]||'st1';
+    const rows=allSyms.filter(sym=>maps[si][sym]).map(sym=>{
+      const act=maps[si][sym];const both=inAll(sym);
+      const ac={EXIT:'act-exit',ROT:'act-rot',BUY:'act-buy',HOLD:'act-hold'}[act]||'';
+      const al={EXIT:'EXIT',ROT:'ROT EXIT',BUY:'BUY',HOLD:'HOLD'}[act]||act;
+      return`<div class="cmp-row ${both?'both':'unique'}"><span class="cmp-sym">${sym}${both?' <span class="cmp-both">ALL</span>':''}</span><span class="cmp-act ${ac}">${al}</span></div>`;
+    }).join('');
+    return`<div class="cmp-col"><div class="cmp-col-hdr ch-${cls}">${s.name} \u00b7 ${s.label}<span style="font-size:9px;opacity:.7;font-weight:400;margin-left:4px">${sl} scenario</span></div><div class="cmp-sym-list">${rows||'<div class="empty">No actions</div>'}</div></div>`;
+  }).join('');
+}
+function sA(a){fA=a;document.querySelectorAll('#abtns .fb').forEach(b=>{b.className='fb';if(b.dataset.a===a){const m={ALL:'fa-all',MAND:'fa-mand',ROT:'fa-rot',BUY:'fa-buy',HOLD:'fa-hold'};b.classList.add(m[a]||'fa-all');}});R();}
+function sR(r){fR=r;document.querySelectorAll('#rbtns .fb').forEach(b=>{b.className='fb';if(b.dataset.r===r){const m={ALL:'fa-all',S1:'fr-s1',S2:'fr-s2',S3:'fr-s3',ANY:'fr-any'};b.classList.add(m[r]||'fa-all');}});R();if(showCmp)renderCmp();}
+function srt(k){if(sortK===k)sortD*=-1;else{sortK=k;sortD=1;}document.querySelectorAll('th .sa').forEach(a=>a.textContent='\u21d5');const el=document.getElementById('a-'+k);if(el)el.textContent=sortD===1?'\u2191':'\u2193';R();}
+function buildRows(s){
+  const rows={};const rcMap={};(s.rec.ranked_candidates||[]).forEach(r=>{rcMap[r.symbol]=r;});
+  SK.forEach((sk,si)=>{
+    const sc=s.rec[sk]||{};const lbl=SL[si];
+    ((sc.exits||{}).mandatory||[]).forEach(e=>{const k='M_'+e.symbol;if(!rows[k])rows[k]={...e,_act:'MAND',_sc:new Set(),ao:1,momentum_score:null,adx:null,atrP:null,roc_60d:null,position_pct:null,pnl:e.unrealized_pnl};rows[k]._sc.add(lbl);});
+    ((sc.exits||{}).rotation||[]).forEach(e=>{const k='R_'+e.symbol+'_'+lbl;const rc=rcMap[e.symbol]||{};rows[k]={...e,_act:'ROT',_sc:new Set([lbl]),ao:2,momentum_score:rc.momentum_score||null,adx:rc.adx||null,atrP:rc.atr_pct||null,roc_60d:rc.roc_60d||null,position_pct:null,pnl:e.unrealized_pnl};});
+    ((sc.entries||{}).new||[]).forEach(e=>{const k='B_'+e.symbol+'_'+lbl;rows[k]={...e,_act:'BUY',_sc:new Set([lbl]),ao:3,momentum_score:e.momentum_score,adx:e.adx,atrP:e.atr_pct||e.atrP,roc_60d:e.roc_60d,pnl:null};});
+    ((sc.holds||{}).positions||[]).forEach(h=>{const k='H_'+h.symbol;const rc=rcMap[h.symbol]||{};if(!rows[k])rows[k]={...h,_act:'HOLD',_sc:new Set(),ao:4,momentum_score:rc.momentum_score||null,adx:rc.adx||null,atrP:rc.atr_pct||null,roc_60d:rc.roc_60d||null,position_pct:null,pnl:h.unrealized_pnl};rows[k]._sc.add(lbl);});
+  });
+  Object.values(rows).forEach(r=>{const rc=rcMap[r.symbol];if(!rc)return;if(r.momentum_score===null)r.momentum_score=rc.momentum_score;if(r.adx===null)r.adx=rc.adx;if(r.atrP===null)r.atrP=rc.atr_pct;if(r.roc_60d===null)r.roc_60d=rc.roc_60d;if(!r.rank)r.rank=rc.rank;if(!r.exchange)r.exchange=rc.exchange;if(!r.asset_class)r.asset_class=rc.asset_class;if(!r.name)r.name=rc.name;});
+  return Object.values(rows);
+}
+function R(){
+  const s=STRATEGIES[aS];const cls=STCLS[aS]||'st1';
+  const q=(document.getElementById('srch').value||'').toLowerCase();
+  const exch=document.getElementById('fex').value;
+  let rows=buildRows(s).filter(r=>{
+    if(q&&!r.symbol.toLowerCase().includes(q)&&!(r.name||'').toLowerCase().includes(q))return false;
+    if(exch!=='ALL'&&r.exchange!==exch)return false;
+    if(fA!=='ALL'){if(fA==='MAND'&&r._act!=='MAND')return false;if(fA==='ROT'&&r._act!=='ROT')return false;if(fA==='BUY'&&r._act!=='BUY')return false;if(fA==='HOLD'&&r._act!=='HOLD')return false;}
+    if(fR!=='ALL'){if(fR==='ANY'){if(r._sc.size===0)return false;}else if(!r._sc.has(fR))return false;}
+    return true;
+  });
+  rows.sort((a,b)=>{const av=a[sortK],bv=b[sortK];if(av===null&&bv===null)return 0;if(av===null)return 1;if(bv===null)return-1;if(typeof av==='string')return sortD*av.localeCompare(bv);return sortD*(av-bv);});
+  document.getElementById('rct').innerHTML=`<span>${rows.length}</span> rows`;
+  const tb=document.getElementById('tb');
+  if(!rows.length){tb.innerHTML=`<tr><td colspan="13" class="empty"><span class="empty-i">\u2205</span>No rows match current filters</td></tr>`;return;}
+  tb.innerHTML=rows.map(r=>row(r,cls)).join('');
+}
+function row(r,cls){
+  const RC={MAND:'row-mand',ROT:'row-rot',BUY:'row-buy',HOLD:'row-hold'};
+  const CHIPS={MAND:'<span class="chip ch-mand">MANDATORY EXIT</span>',ROT:'<span class="chip ch-rot">ROTATION EXIT</span>',BUY:'<span class="chip ch-buy">NEW ENTRY</span>',HOLD:'<span class="chip ch-hold">HOLD</span>'};
+  const rc=(STRATEGIES[aS].rec.ranked_candidates||[]).find(x=>x.symbol===r.symbol);
+  const rnk=r.momentum_rank||(rc&&rc.rank)||'\u2014';
+  const prioM={1:'p1',2:'p2',3:'p3',4:'p4'};
+  const prioEl=r.priority?`<div class="prio ${prioM[r.priority]||'p4'}">P${r.priority}</div>`:'';
+  const ac=r.asset_class?`<span class="ap">${r.asset_class.slice(0,3).toUpperCase()}</span>`:'';
+  const symEl=`<div><div class="sym">${r.symbol}${ac}</div><div class="snm">${r.name||''}</div></div>`;
+  const RM={stop_loss_hit:['rt-stop','STOP HIT'],trend_reversal:['rt-rev','DEATH CROSS'],trend_weakness:['rt-weak','ADX WEAK'],dropped_from_top_n:['rt-drop','RANK DROP']};
+  const[rc2,rl]=(r.reason&&RM[r.reason])||['',''];
+  const rEl=r.reason?`<span class="rt ${rc2}">${rl}</span>`:'';
+  const oShort=(r.order_type||'').replace('limit_order_close_plus_0.5pct','limit close+0.5%').replace('market_order_at_open','market @ open').replace('market_order_at_close','market @ close');
+  const oEl=r.order_type?`<div class="ot">${oShort}</div>`:'';
+  const badges=[...(r._sc||[])].sort().map(s=>`<span class="sb sb-${s.toLowerCase()}">${s}</span>`).join('');
+  const ms=r.momentum_score;let scoreEl='\u2014';
+  if(ms!=null){const p=Math.min(100,Math.max(0,(Math.abs(ms)/35)*100)).toFixed(0);const c=ms>=0?'pos':'neg';const sg=ms>=0?'+':'';const bar=ms>=0?`<div class="sb-bg"><div class="sb-f sf-${cls}" style="width:${p}%"></div></div>`:'';scoreEl=`<div class="sbw">${bar}<span class="${c}">${sg}${ms.toFixed(1)}%</span></div>`;}
+  let adxEl='\u2014';if(r.adx!=null){const c=r.adx>=35?'adxs':r.adx>=25?'adxm':'adxw2';adxEl=`<div class="adxw"><div class="adxp ${c}"></div><span>${r.adx.toFixed(1)}</span></div>`;}
+  const atrEl=r.atrP!=null?r.atrP.toFixed(1)+'%':'\u2014';
+  let estop='\u2014';
+  if(r._act==='BUY'){const st=r.stop_type||'initial';estop=`<div class="stw"><span>Lmt: ${fmt(r.limit_price)}</span><span style="font-size:9px;color:var(--txt2)">Ref: ${fmt(r.entry_price)}</span><div style="display:flex;align-items:center;gap:3px;margin-top:1px"><span style="font-size:9px;color:var(--txt2)">Stop: ${fmt(r.initial_stop)}</span><span class="stb ${st==='trailing'?'st-trail':'st-init'}">${st}</span></div></div>`;}
+  else if(r.entry_price||r.current_stop){const stop=r.current_stop||r.initial_stop;const st=r.stop_type||'initial';estop=`<div class="stw">${r.entry_price?`<span style="font-size:9px;color:var(--txt2)">Entry: ${fmt(r.entry_price)}</span>`:''}<div style="display:flex;align-items:center;gap:3px"><span>Stop: ${fmt(stop)}</span><span class="stb ${st==='trailing'?'st-trail':'st-init'}">${st}</span></div></div>`;}
+  const posEl=r.position_pct!=null?r.position_pct.toFixed(2)+'%':'\u2014';
+  let pnlEl='\u2014';if(r.pnl!=null){const c=r.pnl>=0?'pos':'neg';const sg=r.pnl>=0?'+':'';const pp=r.unrealized_pnl_pct;pnlEl=`<div style="display:flex;flex-direction:column;align-items:flex-end"><span class="${c}">${sg}\u20ac${Math.abs(r.pnl).toLocaleString('de-DE',{maximumFractionDigits:0})}</span>${pp!=null?`<span style="font-size:9px;color:var(--txt2)">${sg}${pp.toFixed(1)}%</span>`:''}</div>`;}
+  let r60='\u2014';if(r.roc_60d!=null){const c=r.roc_60d>=0?'pos':'neg';r60=`<span class="${c}">${r.roc_60d>=0?'+':''}${r.roc_60d.toFixed(1)}%</span>`;}
+  return`<tr class="${RC[r._act]||''}"><td class="tl" style="color:var(--txt3);font-size:10px;min-width:26px">${rnk}${prioEl?'<br>'+prioEl:''}</td><td class="tl">${symEl}</td><td class="tl">${CHIPS[r._act]}</td><td class="tl"><div style="display:flex;flex-direction:column;gap:2px">${rEl}${oEl}</div></td><td class="tl"><div class="sba">${badges||'<span style="color:var(--txt3);font-size:10px">\u2014</span>'}</div></td><td class="tl" style="font-size:10px;color:var(--txt2);font-family:var(--mono)">${r.exchange||'\u2014'}</td><td>${scoreEl}</td><td>${adxEl}</td><td>${atrEl}</td><td>${estop}</td><td>${posEl}</td><td>${pnlEl}</td><td>${r60}</td></tr>`;
+}
+function fmt(v){if(v==null)return'\u2014';if(v>=10000)return v.toLocaleString('de-DE',{maximumFractionDigits:0});if(v>=1000)return v.toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0});return v.toFixed(2);}
+init();
+</script>
+</body>
+</html>"""
+
+
+def build_html_dashboard(
+    strategy_results: List[Tuple[Dict, str, str, bool, str]],
+    output_path: Path,
+) -> None:
+    """
+    Generate a combined interactive HTML dashboard from one or more
+    strategy recommendation dicts (Script 11 output).
+
+    Each call to this function produces a single self-contained HTML file
+    that embeds ALL strategies as a JS constant array, enabling the
+    strategy-switcher tab bar and side-by-side compare view.
+
+    Args:
+        strategy_results:
+            List of (rec_dict, strategy_name, strategy_label, deployed, formula).
+            Collected by main() from each successful _run_core() call.
+        output_path:
+            Destination path, e.g. reports/rebalancing/2026-03_dashboard.html
+
+    Raises:
+        IOError on write failure.
+    """
+    if not strategy_results:
+        logger.warning("build_html_dashboard: no results supplied — skipping.")
+        return
+
+    # Build the JS STRATEGIES array literal
+    strat_objects = []
+    for rec, name, label, deployed, formula in strategy_results:
+        roc_weights = None
+        if formula in ("roc_weighted", "roc_weight"):
+            roc_weights = rec.get("momentum", {}).get("roc_weights", [0.20, 0.30, 0.50])
+
+        obj = {
+            "name":         name,
+            "label":        label,
+            "deployed":     deployed,
+            "formula":      formula,
+            "formula_desc": _formula_desc(formula, rec),
+            "roc_weights":  roc_weights,
+            "rec":          _slim_rec(rec),
+        }
+        strat_objects.append(json.dumps(obj, ensure_ascii=False, default=str))
+
+    strategies_js = "[\n" + ",\n".join(strat_objects) + "\n]"
+
+    # Inject into template
+    html = _dashboard_template_html()
+    html = html.replace(_JS_SENTINEL, strategies_js)
+    html = html.replace(
+        _TS_SENTINEL,
+        f"<!-- Generated by Script 12 at "
+        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
+        f"| {len(strategy_results)} strateg"
+        f"{'y' if len(strategy_results) == 1 else 'ies'} -->",
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+    logger.info(
+        f"HTML dashboard written ({output_path.stat().st_size / 1024:.1f} KB) "
+        f"-> {output_path}"
+    )
+
+
+# ============================================================================
 # CLI
 # ============================================================================
 
@@ -2197,33 +2741,19 @@ Examples:
 # MAIN
 # ============================================================================
 
-def _run_for_strategy(strategy: "StrategyDef", args) -> int:
-    """Run Script 12 for one strategy with namespaced report output path."""
-    global REPORTS_DIR
+def _run_core(args, strategy_name: str = "", strategy_obj=None):
+    """
+    Run PDF generation for one strategy.
 
-    strat_reports = strategy.reports_dir(PROJECT_ROOT, "rebalancing")
-    strat_reports.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
-    logger.info(f"[{strategy.name}] Reports : {strat_reports}")
-
-    _orig_rep = REPORTS_DIR
-    REPORTS_DIR = strat_reports
-    try:
-        rc = _run_core(args, strategy.name)
-        return rc if isinstance(rc, int) else 0
-    finally:
-        REPORTS_DIR = _orig_rep
-
-
-def _run_core(args, strategy_name: str = '') -> None:
-
-    # Resolve input path
+    Returns:
+        (rec, strategy_name, label, deployed, formula)  -- on success
+        None                                             -- on failure or dry-run
+    """
     try:
         json_path = resolve_input_file(args.month, args.input)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
-        return 1
+        return None
 
     month_label = json_path.stem.replace("_recommendations", "")
 
@@ -2236,40 +2766,33 @@ def _run_core(args, strategy_name: str = '') -> None:
     logger.info("=" * 65)
     logger.info(f"Input  : {json_path}")
 
-    # Load
     try:
         rec = load_recommendations(json_path)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.error(f"Failed to load recommendations JSON: {exc}")
-        return 1
+        return None
 
     status = rec.get("status", "")
-    exits  = rec.get("exits",   {})
-    entries= rec.get("entries", {})
-    holds  = rec.get("holds",   {})
-    n_mand = len(exits.get("mandatory", []))
-    n_rot  = len(exits.get("rotation",  []))
-    n_ent  = len(entries.get("new", []))
-    n_hold = holds.get("total", 0)
+    s1     = rec.get("scenario_1_pure_momentum") or {}
+    n_mand = len((s1.get("exits") or {}).get("mandatory", []))
+    n_rot  = len((s1.get("exits") or {}).get("rotation",  []))
+    n_ent  = (s1.get("entries") or {}).get("total", 0)
+    n_hold = (s1.get("holds")   or {}).get("total", 0)
 
-    logger.info(f"Month  : {rec.get('month', 'â€”')}")
+    logger.info(f"Month  : {rec.get('month', chr(8212))}")
     logger.info(f"Status : {status}")
     logger.info(f"Equity : EUR {rec.get('account_equity', 0):,.2f}")
     logger.info(
-        f"Actions: {n_mand} mandatory exits, {n_rot} rotation exits, "
+        f"Actions (S1): {n_mand} mandatory exits, {n_rot} rotation exits, "
         f"{n_ent} new entries, {n_hold} holds"
     )
 
     if args.dry_run:
-        logger.info("DRY RUN -- JSON validated. No PDF written.")
+        logger.info("DRY RUN -- JSON validated. No PDF or HTML written.")
         print(f"\nDRY RUN complete. Input is valid: {json_path}")
-        print(f"  Status  : {status}")
-        print(f"  Exits   : {n_mand} mandatory + {n_rot} rotation")
-        print(f"  Entries : {n_ent}")
-        print(f"  Holds   : {n_hold}")
-        return 0
+        print(f"  Status : {status}")
+        return None
 
-    # Resolve output path
     if args.output:
         output_path = Path(args.output)
         if not output_path.is_absolute():
@@ -2280,20 +2803,28 @@ def _run_core(args, strategy_name: str = '') -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Generate
     try:
         build_pdf(rec, output_path, strategy_name=strategy_name)
     except Exception as exc:
         logger.exception(f"PDF generation failed: {exc}")
-        return 1
+        return None
 
-    logger.info(f"Report saved -> {output_path}")
+    logger.info(f"PDF saved -> {output_path}")
     print(f"\n{'=' * 65}")
-    print(f"  Script 12 complete.")
+    print(f"  Script 12 [{strategy_name or 'default'}]")
     print(f"  PDF  -> {output_path}")
     print(f"  JSON -> {json_path}")
     print(f"{'=' * 65}\n")
-    return 0
+
+    label    = strategy_name
+    deployed = False
+    formula  = "sma_distance"
+    if strategy_obj is not None:
+        label    = getattr(strategy_obj, "label",    strategy_name)
+        deployed = getattr(strategy_obj, "deployed", False)
+        formula  = _load_formula_from_strategy(strategy_obj)
+
+    return (rec, strategy_name, label, deployed, formula)
 
 
 def main() -> int:
@@ -2314,16 +2845,53 @@ def main() -> int:
     logger.info(f"Strategies : {[s.name for s in strategies]}")
     from datetime import datetime as _dt
     _start = _dt.now()
-    failed = []
+
+    failed: List[str]  = []
+    strategy_results: List[Tuple] = []
+
     for strategy in strategies:
-        rc = _run_for_strategy(strategy, args)
-        if rc != 0:
+        global REPORTS_DIR
+        strat_reports = strategy.reports_dir(PROJECT_ROOT, "rebalancing")
+        strat_reports.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            f"\n[{strategy.name}] -- {strategy.label} "
+            f"({'LIVE' if strategy.deployed else 'PAPER'}) --"
+        )
+        logger.info(f"[{strategy.name}] Reports : {strat_reports}")
+        _orig_rep   = REPORTS_DIR
+        REPORTS_DIR = strat_reports
+        try:
+            result = _run_core(args, strategy.name, strategy_obj=strategy)
+        finally:
+            REPORTS_DIR = _orig_rep
+        if result is None:
             failed.append(strategy.name)
+        else:
+            strategy_results.append(result)
 
-    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    if strategy_results and not args.dry_run:
+        first_rec     = strategy_results[0][0]
+        month_lbl     = first_rec.get("month", "unknown")
+        first_strat   = strategies[0]
+        html_base_dir = first_strat.reports_dir(PROJECT_ROOT, "rebalancing").parent
+        html_path     = html_base_dir / f"{month_lbl}_dashboard.html"
+        n = len(strategy_results)
+        logger.info(
+            f"\nGenerating combined HTML dashboard "
+            f"({n} strat{'egy' if n == 1 else 'egies'}: "
+            f"{', '.join(r[1] for r in strategy_results)})..."
+        )
+        try:
+            build_html_dashboard(strategy_results, html_path)
+            print(f"  HTML -> {html_path}")
+        except Exception as exc:
+            logger.warning(f"HTML dashboard generation failed (non-fatal): {exc}")
+
+    elapsed = _dt.now() - _start
+    logger.info(
+        f"Duration: {elapsed} | Strategies: {len(strategies)} | Failed: {failed or 'none'}"
+    )
+    logger.info("Next step: review PDF + HTML dashboard, then execute on execution_date.")
     return 1 if failed else 0
-
-
-
 if __name__ == "__main__":
     main()

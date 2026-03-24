@@ -134,6 +134,10 @@ from config.strategies import resolve_strategies, add_strategy_argument, Strateg
 # Kept as a flat dict for backward compatibility with Script 17's
 #   `from backtest_engine_16 import DEFAULTS` import pattern.
 DEFAULTS = P.as_backtest_defaults()
+# Extend DEFAULTS with momentum formula fields from config
+DEFAULTS.setdefault("momentum_formula", getattr(getattr(P, 'momentum', None), 'formula', 'sma_dist'))
+DEFAULTS.setdefault("roc_periods",      getattr(getattr(P, 'momentum', None), 'roc_periods', [20, 60, 120]))
+DEFAULTS.setdefault("roc_weights",      getattr(getattr(P, 'momentum', None), 'roc_weights', [0.20, 0.30, 0.50]))
 
 # ============================================================================
 # LOGGING
@@ -327,16 +331,35 @@ def compute_indicators(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
     """
     Compute all required strategy indicators in a single vectorised pass.
     Only uses historical data (no look-ahead).
+
+    Momentum formula is controlled by params["momentum_formula"]:
+        "sma_dist"   (default) : (Close - SMA_slow) / SMA_slow * 100
+        "roc_weight"           : weighted sum of ROC(20), ROC(60), ROC(120)
     """
     df = df.copy()
     df["sma_fast"]  = _sma(df["close"], params["sma_fast"])
     df["sma_slow"]  = _sma(df["close"], params["sma_slow"])
     df["atr_20"]    = _atr(df, period=20)
-    df["adx"]    = _adx(df, period=14)
-    df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
+    df["adx"]       = _adx(df, period=14)
     df["atr_pct"]   = df["atr_20"] / df["close"]
     # FIX-2: 20-day rolling high used by is_entry_confirmed() to gate entries near strength
     df["high_20d"]  = df["close"].rolling(20, min_periods=20).max()
+
+    formula = params.get("momentum_formula", "sma_dist")
+
+    if formula == "roc_weight":
+        # Weighted sum of ROC periods: Score = sum(w_i * ROC_i)
+        periods = params.get("roc_periods", [20, 60, 120])
+        weights = params.get("roc_weights", [0.20, 0.30, 0.50])
+        score   = pd.Series(0.0, index=df.index)
+        for period, weight in zip(periods, weights):
+            roc = df["close"].pct_change(period) * 100
+            score = score + weight * roc
+        df["momentum"] = score
+    else:
+        # Default: sma_dist — ((Close - SMA_slow) / SMA_slow) * 100
+        df["momentum"] = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
+
     return df
 
 
@@ -1875,19 +1898,25 @@ def _run_core(args, strategy_name: str = '') -> int:
 
     params = {**DEFAULTS}
     params.update({
-        "initial_equity":   args.initial_equity,
-        "sma_fast":         args.sma_fast,
-        "sma_slow":         args.sma_slow,
-        "adx_threshold":    args.adx_threshold,
-        "adx_weak":         args.adx_weak,
-        "init_stop_mult":   args.init_stop_mult,
-        "trail_stop_mult":  args.trail_stop_mult,
-        "trail_activation": args.trail_activation,
-        "max_positions":    args.max_positions,
-        "risk_per_trade":   args.risk_per_trade,
-        "cost_bps":         args.cost_bps,
+        "initial_equity":    args.initial_equity,
+        "sma_fast":          args.sma_fast,
+        "sma_slow":          args.sma_slow,
+        "adx_threshold":     args.adx_threshold,
+        "adx_weak":          args.adx_weak,
+        "init_stop_mult":    args.init_stop_mult,
+        "trail_stop_mult":   args.trail_stop_mult,
+        "trail_activation":  args.trail_activation,
+        "max_positions":     args.max_positions,
+        "risk_per_trade":    args.risk_per_trade,
+        "cost_bps":          args.cost_bps,
+        "momentum_formula":  DEFAULTS.get("momentum_formula", "sma_dist"),
+        "roc_periods":       DEFAULTS.get("roc_periods", [20, 60, 120]),
+        "roc_weights":       DEFAULTS.get("roc_weights", [0.20, 0.30, 0.50]),
     })
 
+    logger.info(f"Momentum formula : {params['momentum_formula']}")
+    if params["momentum_formula"] == "roc_weight":
+        logger.info(f"  ROC periods: {params['roc_periods']}  weights: {params['roc_weights']}")
     start = pd.Timestamp(args.start_date)
     end   = pd.Timestamp(args.end_date)
 
