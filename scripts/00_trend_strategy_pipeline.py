@@ -3,7 +3,7 @@
 """
 00_run_pipeline.py
 ==================
-Master Pipeline Orchestrator — Architecture v3.2 (Feb 2026)
+Master Pipeline Orchestrator — Architecture v3.9 (Mar 2026)
 
 Runs all strategy scripts incrementally in the correct dependency order.
 Each step is independently logged; failures are isolated and reported.
@@ -71,8 +71,10 @@ QUICK-START
 
   # Custom with mode inheritance (monthly behavior, custom steps):
   python scripts/00_trend_strategy_pipeline.py custom --as-monthly \
-      --steps 1,3,4,5,6,7,8,11,12 \
-      --as-of-date 2026-01-31 --account-equity 50000
+      --steps 6,7,8,9,10,11,12,15 \
+      --as-of-date 2026-03-19 \
+      --account-equity 20000 \
+      --vix 18.5
 
 DEPENDENCIES
 ------------
@@ -101,11 +103,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+# Strategy registry — must be importable before any script runs
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+try:
+    from config.strategies import StrategyRegistry
+    _REGISTRY_AVAILABLE = True
+except Exception:
+    _REGISTRY_AVAILABLE = False
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION = "3.2.0"
+VERSION = "3.9.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Maps canonical script numbers → file names
@@ -503,23 +513,30 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
             a += ["--benchmark", benchmark]
     
     # ── Scripts 16-21: Backtest & validation ──────────────────────────────────
-    if num in (16, 17, 18):
-        # Scripts 16-18: Backtest engine, walk-forward, monte carlo
+    if num in (16, 17):
+        # Scripts 16-17 only: Backtest engine + WFO take date range + equity args
+        # Script 18 (Monte Carlo) reads from backtest output files — no date args
         backtest_start = getattr(ns, "backtest_start", None)
         if backtest_start:
             a += ["--start-date", backtest_start]
-        
+
         backtest_end = getattr(ns, "backtest_end", None)
         if backtest_end:
             a += ["--end-date", backtest_end]
-        
+
         initial_equity = getattr(ns, "initial_equity", None)
         if initial_equity:
             a += ["--initial-equity", str(initial_equity)]
-        
+
         max_positions = getattr(ns, "max_positions", None)
         if max_positions:
             a += ["--max-positions", str(max_positions)]
+
+    if num == 18:
+        # Script 18 (Monte Carlo): only backtest-tag and output-tag are relevant
+        output_tag = getattr(ns, "output_tag", None) or getattr(ns, "backtest_tag", None)
+        if output_tag:
+            a += ["--output-tag", output_tag]
     
     elif num in (19, 20, 21):
         # Scripts 19-21: Validators and deployment decision
@@ -530,6 +547,17 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
     # Script 15 only writes HTML reports
     if getattr(ns, "dry_run", False) and num not in (15,):
         a += ["--dry-run"]
+
+    # ── Universal: --strategy ─────────────────────────────────────────────────
+    # Scripts 04-05 are strategy-agnostic (shared universe + indicators).
+    # Scripts 06-24 all support --strategy for namespaced per-strategy I/O.
+    # Always forward --strategy so subscripts use the registry consistently.
+    # When the user omits --strategy on Script 00 we send "all" explicitly,
+    # ensuring every subscript runs for all active strategies rather than
+    # each one independently resolving the registry (which risks inconsistency).
+    if num >= 6:
+        strategy_val = getattr(ns, "strategy", None) or "all"
+        a += ["--strategy", strategy_val]
 
     return a
 
@@ -864,7 +892,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="00_trend_strategy_pipeline.py",
         description=textwrap.dedent("""\
-            Master Pipeline Orchestrator — Architecture v3.2
+            Master Pipeline Orchestrator — Architecture v3.9
             Runs all strategy scripts incrementally in the correct order.
         """),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1192,6 +1220,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ── Strategy selection ───────────────────────────────────────────────────
+    parser.add_argument(
+        "--strategy",
+        metavar="NAME",
+        default=None,
+        help=(
+            "Strategy or strategies to run. "
+            "Use the key from config/strategies.json "
+            "(e.g. 'sma_dist', 'roc_weight'). "
+            "Comma-separate for multiple: --strategy sma_dist,roc_weight. "
+            "Omit or pass 'all' to run all active strategies (default). "
+            "Forwarded to all scripts that support --strategy (06-24)."
+        ),
+    )
+
     parser.add_argument(
         "--log-dir",
         dest="log_dir",
@@ -1211,7 +1254,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s v{VERSION} — Architecture v3.2",
+        version=f"%(prog)s v{VERSION} — Architecture v3.9",
     )
 
     return parser
@@ -1242,11 +1285,26 @@ def main() -> int:
         print(f"  Equity    : €{ns.account_equity:,.0f}")
     if ns.vix is not None:
         print(f"  VIX       : {ns.vix}")
+    strategy_val = getattr(ns, "strategy", None) or "all"
+    print(f"  Strategy  : {_c(CLR_BOLD, strategy_val)}", end="")
+    if _REGISTRY_AVAILABLE:
+        try:
+            reg = StrategyRegistry(project_root=SCRIPT_DIR.parent)
+            resolved = reg.resolve(None if strategy_val == "all" else strategy_val)
+            badges = "  ".join(
+                f"{_c(CLR_GREEN, s.name) if s.deployed else _c(CLR_YELLOW, s.name + ' [PAPER]')}"
+                for s in resolved
+            )
+            print(f"  →  {badges}")
+        except Exception:
+            print()
+    else:
+        print()
     if ns.dry_run:
         print(f"  {_c(CLR_YELLOW, '⚠  DRY-RUN mode — no files will be written')}")
     print()
 
-    logger.info(f"Mode={ns.mode}  as_of_date={ns.as_of_date}  "
+    logger.info(f"Mode={ns.mode}  strategy={strategy_val}  as_of_date={ns.as_of_date}  "
                 f"account_equity={ns.account_equity}  vix={ns.vix}  "
                 f"dry_run={ns.dry_run}")
 

@@ -1,14 +1,98 @@
 {
   "_meta": {
-    "version": "3.10",
-    "last_updated": "2026-03-23",
-    "description": "Single source of truth for all strategy, backtest, and optimizer parameters. Edit this file only. Never hardcode values in scripts.",
-    "architecture_ref": "Multi-Asset Trend Following Strategy v3.9 (Mar 2026)"
+    "version": "3.11",
+    "last_updated": "2026-03-26",
+    "description": "EXPERIMENT \u2014 ROC-weighted momentum formula. Do NOT use for live trading. Must pass Scripts 16->17->18->19->20->21 gates before promotion to production. Production file: strategy_parameters.json (unchanged).",
+    "architecture_ref": "Multi-Asset Trend Following Strategy v3.9-EXP-ROC (Mar 2026)",
+    "experiment": {
+      "hypothesis": "Research-aligned weighted ROC (Jegadeesh & Titman 1993) ranks stocks by recent trend acceleration rather than SMA-distance, potentially improving rank quality for steady compounders like BSP.XETRA.",
+      "baseline": "strategy_parameters.json \u2014 formula=sma_distance",
+      "change": "momentum.formula = roc_weighted with weights [0.20, 0.30, 0.50]",
+      "promotion_gate": "All gates in Scripts 19-21 must PASS before merging to production.",
+      "output_dir": "results/exp_roc",
+      "created_by": "pipeline experiment mode",
+      "created_date": "2026-03-20"
+    },
+    "wfo_history": [
+      {
+        "run": "fast_v1",
+        "date": "2026-03-22",
+        "grid": "fast",
+        "windows": 11,
+        "stability_ratio": 0.3484,
+        "recent_stability_ratio": 1.1459,
+        "oos_consistency": 0.727,
+        "recent_oos_consistency": 1.0,
+        "param_cv": {
+          "sma_slow": 0.149,
+          "trail_stop_mult": 0.117,
+          "max_positions": 0.103
+        },
+        "wfo_pick": {
+          "sma_slow": 200,
+          "trail_stop_mult": 3.0,
+          "max_positions": 35
+        },
+        "mean_params": {
+          "sma_slow": 263.6,
+          "trail_stop_mult": 3.546,
+          "max_positions": 40.5
+        },
+        "applied": {
+          "sma_slow": 250,
+          "trail_stop_mult": 3.5,
+          "max_positions": 40
+        },
+        "note": "Fast grid trail=[3.0,3.5,4.0] \u2014 grid edge at 4.0 (5/11 windows). Mean=3.55 \u2192 3.5 applied. Full-grid run may push trail higher. sma_slow mean=264 \u2192 250 applied."
+      },
+      {
+        "run": "full_v3",
+        "date": "2026-03-26",
+        "grid": "full (600 combos: 5\u00d78\u00d75\u00d73 with roc_weights)",
+        "windows": 11,
+        "stability_ratio": 0.3454,
+        "recent_stability_ratio": 0.6902,
+        "oos_consistency": 0.545,
+        "recent_oos_consistency": 0.6,
+        "param_cv": {
+          "sma_slow": 0.207,
+          "trail_stop_mult": 0.285,
+          "max_positions": 0.171,
+          "roc_weights": 0.38
+        },
+        "wfo_pick": {
+          "sma_slow": 150,
+          "trail_stop_mult": 6.0,
+          "max_positions": 30,
+          "roc_weights": [
+            0.2,
+            0.3,
+            0.5
+          ]
+        },
+        "mean_params": {
+          "sma_slow": 295.5,
+          "trail_stop_mult": 4.5,
+          "max_positions": 41.8
+        },
+        "applied": {
+          "sma_slow": 300,
+          "trail_stop_mult": 4.5,
+          "max_positions": 40,
+          "roc_weights": [
+            0.2,
+            0.3,
+            0.5
+          ]
+        },
+        "key_finding": "roc_weights [0.2,0.3,0.5] selected in 11/11 windows (100%) \u2014 confirmed fixed. sma_slow, trail, max_pos all at opposing grid edges vs their means \u2014 mean-rounded values applied instead of WFO picks. roc_weights removed from optimization grid going forward."
+      }
+    ]
   },
   "indicators": {
     "_comment": "Technical indicator periods. sma_fast/sma_slow drive compute_indicators() in Script 16/17. atr_period drives stop-loss sizing in Scripts 8/16. adx_period is fixed at 14 (Wilder standard).",
     "sma_fast": 100,
-    "sma_slow": 250,
+    "sma_slow": 300,
     "atr_period": 20,
     "adx_period": 14
   },
@@ -22,14 +106,14 @@
     "min_data_points": 250
   },
   "momentum": {
-    "_comment": "formula: 'sma_dist' uses ((Close - SMA_slow) / SMA_slow) * 100. 'roc_weight' uses weighted sum of ROC periods. sma_period must match indicators.sma_slow when formula=sma_dist.",
-    "sma_period": 250,
+    "_comment": "formula: 'roc_weight' uses weighted sum of ROC periods. roc_weights=[0.2,0.3,0.5] confirmed by full_v3 WFO: long-biased preset selected in 11/11 windows (100%). Weights are now FIXED, not optimised. sma_period matches indicators.sma_slow.",
+    "formula": "roc_weight",
+    "sma_period": 300,
     "roc_periods": [
       20,
       60,
       120
     ],
-    "formula": "sma_dist",
     "roc_weights": [
       0.2,
       0.3,
@@ -39,7 +123,7 @@
   "stops": {
     "_comment": "ATR-based stop-loss system (Scripts 8/16). init_stop_mult: set once at entry, never lowered. trail_stop_mult: activates after trail_activation profit. Trailing updates Fridays only, ratchets up only.",
     "init_stop_mult": 2.5,
-    "trail_stop_mult": 5.0,
+    "trail_stop_mult": 4.5,
     "trail_activation": 0.08,
     "max_stop_distance_pct": 0.4
   },
@@ -120,7 +204,7 @@
     "param_cv_good": 0.2
   },
   "optimization_grid": {
-    "_comment": "Full WFO parameter search space (Script 17). Only include parameters whose variation meaningfully changes strategy behaviour. Fixed params (sma_fast, adx_threshold, risk_per_trade) are in fixed_params below. Grid must never have all values at one edge \u2014 expand if optimizer converges to boundary. trail_stop_mult extended to 5.5 (Run 5: mean=4.82, recommended=5.5). max_positions mean=40 across runs \u2014 expand to 50 next iteration.",
+    "_comment": "Full WFO grid (Script 17). roc_weights removed from grid: confirmed fixed at [0.2,0.3,0.5] by full_v3 (600 combos, 11/11 windows selected long-biased). trail range kept at [2.0-5.5]: mean=4.5 across full_v3 windows. sma_slow range unchanged pending resolution of opposing-edge instability (mean=295, rec=150).",
     "sma_slow": [
       150,
       200,
@@ -129,6 +213,8 @@
       350
     ],
     "trail_stop_mult": [
+      2.0,
+      2.5,
       3.0,
       3.5,
       4.0,
@@ -145,13 +231,15 @@
     ]
   },
   "optimization_grid_fast": {
-    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on full-grid WFO Run 6 results: sma_slow=250, trail_stop_mult=5.0, max_positions=40.",
+    "_comment": "Fast grid centred on full_v3 mean params: sma_slow~300, trail~4.5, max_pos~40. roc_weights removed (fixed at [0.2,0.3,0.5]).",
     "sma_slow": [
-      200,
       250,
-      300
+      300,
+      350
     ],
     "trail_stop_mult": [
+      3.5,
+      4.0,
       4.5,
       5.0,
       5.5

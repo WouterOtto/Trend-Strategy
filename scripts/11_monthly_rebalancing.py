@@ -147,6 +147,7 @@ CONFIG_DIR       = PROJECT_ROOT / "config"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ============================================================================
 # STRATEGY CONSTANTS  (match architecture v3.2 â€“ do NOT change without review)
@@ -2915,6 +2916,7 @@ Examples:
         help="Compute and display recommendations without writing any output files.",
     )
 
+    add_strategy_argument(parser)
     return parser.parse_args()
 
 
@@ -2922,8 +2924,32 @@ Examples:
 # MAIN
 # ============================================================================
 
-def main() -> None:
-    args = parse_args()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run for one strategy with namespaced I/O paths."""
+    global SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+
+    strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, "rebalancing")
+    strat_signals.mkdir(parents=True, exist_ok=True)
+    strat_portfolio.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Signals   : {strat_signals}")
+    logger.info(f"[{strategy.name}] Portfolio : {strat_portfolio}")
+
+    _orig = (SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR)
+    SIGNALS_DIR   = strat_signals
+    PORTFOLIO_DIR = strat_portfolio
+    REPORTS_DIR   = strat_reports
+    try:
+        return _run_core(args, strategy.name)
+    finally:
+        SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR = _orig
+
+
+def _run_core(args, strategy_name: str = '') -> int:
 
     global logger
     logger = setup_logging(args.rebalance_date)
@@ -2965,15 +2991,45 @@ def main() -> None:
 
     # â”€â”€ Exit status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     status = recommendations.get("status", "")
+        # ── Exit status ───────────────────────────────────────────────────────────
+    status = recommendations.get("status", "")
     if "HALTED" in status:
         logger.error("Script 11 completed with HALTED status. Trading suspended.")
-        sys.exit(2)
+        return 2
     elif recommendations["circuit_breakers"].get("halt_entries") and not args.override_circuit_breaker:
-        logger.warning("Script 11 completed â€” entries halted by circuit breaker.")
-        sys.exit(1)
+        logger.warning("Script 11 completed — entries halted by circuit breaker.")
+        return 1
     else:
         logger.info("Script 11 completed successfully.")
-        sys.exit(0)
+        return 0
+
+
+def main() -> int:
+    args = parse_args()
+    logger.info("=" * 70)
+    logger.info("MONTHLY REBALANCER -- Script 11")
+    logger.info("Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(getattr(args, "strategy", None), project_root=PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    logger.info(f"Next step: python scripts/12_generate_recommendation_report.py")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

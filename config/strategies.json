@@ -1,0 +1,32 @@
+{
+  "_comment": "Strategy registry — single source of truth for all named strategy variants. Each key is the canonical strategy identifier used in directory names, CLI flags, report labels, and dashboard filters. Name strategies by their distinguishing formula or characteristic — never by deployment status (e.g. not 'prod' or 'test', because that changes; the formula does not). Add a new strategy here; no script code requires modification.",
+
+  "strategies": {
+    "sma_dist": {
+      "label":       "SMA Distance",
+      "config":      "config/strategy_parameters.json",
+      "color":       "#27ae60",
+      "active":      true,
+      "deployed":    true,
+      "description": "Momentum = (Close - SMA_slow) / SMA_slow x 100. Rewards depth and duration of existing trend. WFO-validated params: sma_slow=200, trail_stop_mult=5.5, max_positions=40."
+    },
+    "roc_weight": {
+      "label":       "ROC Weighted",
+      "config":      "config/strategy_parameters_exp_roc.json",
+      "color":       "#1a4eb5",
+      "active":      true,
+      "deployed":    false,
+      "description": "Momentum = sum(w_i x ROC_period_i). Weights [0.20, 0.30, 0.50] over [20d, 60d, 120d]. Rewards recent acceleration. WFO-validated params: sma_slow=250, trail_stop_mult=5.0, max_positions=40. Paper-trading phase."
+    }
+  },
+
+  "_schema": {
+    "key":         "Short snake_case identifier. Used in directory names and CLI --strategy flag.",
+    "label":       "Human-readable display name for reports and dashboards.",
+    "config":      "Path to strategy_parameters JSON, relative to project root.",
+    "color":       "Hex color for charts and dashboards. Each strategy must have a distinct color.",
+    "active":      "true = included in --strategy all runs and shown in all reports.",
+    "deployed":    "true = live capital. false = paper trading only. Controls report badges.",
+    "description": "One-sentence description of formula and key parameters. Keep current."
+  }
+}

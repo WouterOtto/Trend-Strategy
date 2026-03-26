@@ -178,6 +178,7 @@ LOG_DIR        = PROJECT_ROOT / "logs"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ---------------------------------------------------------------------------
 # Script 16 path (needed by subprocess workers for dynamic import)
@@ -418,14 +419,22 @@ def build_windows(
 # HELPER: PARAMETER COMBINATIONS
 # ===========================================================================
 
-def build_param_combinations(grid: Dict) -> List[Dict]:
-    """Return all parameter combinations from the grid."""
+def build_param_combinations(grid: Dict, extra_fixed: Optional[Dict] = None) -> List[Dict]:
+    """
+    Return all parameter combinations from the grid.
+
+    Handles list-of-lists grid values (e.g. roc_weights = [[0.5,0.3,0.2], ...]).
+    extra_fixed is merged after FIXED_PARAMS, allowing per-strategy overrides
+    (e.g. momentum_formula, roc_periods) without mutating the module-level dict.
+    """
     keys   = list(grid.keys())
     values = list(grid.values())
     combos = []
     for combo in itertools.product(*values):
         params = dict(zip(keys, combo))
         params.update(FIXED_PARAMS)
+        if extra_fixed:
+            params.update(extra_fixed)
         combos.append(params)
     return combos
 
@@ -1911,6 +1920,7 @@ Examples:
                    help="Tag appended to output filenames (e.g. 'quarterly_Q4')")
     p.add_argument("--verbose",         action="store_true",
                    help="Enable DEBUG logging")
+    add_strategy_argument(p)
     return p
 
 
@@ -1918,12 +1928,75 @@ Examples:
 # ENTRY POINT
 # ===========================================================================
 
-def main() -> None:
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 17 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, WFO_DIR, REPORTS_DIR, PARAM_GRID, PARAM_GRID_FAST, FIXED_PARAMS, BT_DEFAULTS
+
+    # ── Load strategy-specific config to override module-level grid globals ──
+    # P is loaded at import time from whichever strategy_parameters.json is on
+    # sys.path first. For multi-strategy runs we must reload from each strategy's
+    # own config file so that the parameter grid, fixed params, and momentum
+    # formula are correct for this strategy.
+    try:
+        import json as _json
+        _cfg = _json.loads(strategy.config_path.read_text())
+
+        # Override parameter grids
+        _og  = _cfg.get("optimization_grid",      {})
+        _ogf = _cfg.get("optimization_grid_fast",  {})
+        _fp  = _cfg.get("fixed_params",            {})
+        _mo  = _cfg.get("momentum", {})
+
+        # Strip _comment keys (not valid grid dimensions)
+        PARAM_GRID      = {k: v for k, v in _og.items()  if not k.startswith("_")}
+        PARAM_GRID_FAST = {k: v for k, v in _ogf.items() if not k.startswith("_")}
+        FIXED_PARAMS    = {k: v for k, v in _fp.items()  if not k.startswith("_")}
+
+        # Inject momentum formula fields into FIXED_PARAMS so every combo carries them
+        FIXED_PARAMS["momentum_formula"] = _mo.get("formula",      "sma_dist")
+        FIXED_PARAMS["roc_periods"]      = _mo.get("roc_periods",  [20, 60, 120])
+        FIXED_PARAMS["roc_weights"]      = _mo.get("roc_weights",  [0.20, 0.30, 0.50])
+
+        # Update BT_DEFAULTS with formula fields so fallback paths also carry them
+        BT_DEFAULTS["momentum_formula"] = _mo.get("formula",      "sma_dist")
+        BT_DEFAULTS["roc_periods"]      = _mo.get("roc_periods",  [20, 60, 120])
+        BT_DEFAULTS["roc_weights"]      = _mo.get("roc_weights",  [0.20, 0.30, 0.50])
+
+        logger.info(f"[{strategy.name}] Config loaded: {strategy.config_path.name}")
+        logger.info(f"[{strategy.name}] Momentum formula : {FIXED_PARAMS['momentum_formula']}")
+        if FIXED_PARAMS["momentum_formula"] == "roc_weight":
+            logger.info(f"[{strategy.name}] ROC periods : {FIXED_PARAMS['roc_periods']}")
+            logger.info(f"[{strategy.name}] ROC weights : {FIXED_PARAMS['roc_weights']}")
+        logger.info(f"[{strategy.name}] Grid dimensions : { {k: len(v) for k,v in PARAM_GRID.items()} }")
+
+    except Exception as _exc:
+        logger.warning(f"[{strategy.name}] Could not reload config ({_exc}); using module-level defaults")
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_wfo      = strategy.wfo_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'backtest')
+    strat_backtest.mkdir(parents=True, exist_ok=True)
+    strat_wfo.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    _o_bt, _o_wfo, _o_rp = BACKTEST_DIR, WFO_DIR, REPORTS_DIR
+    BACKTEST_DIR = strat_backtest
+    WFO_DIR      = strat_wfo
+    REPORTS_DIR  = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        BACKTEST_DIR, WFO_DIR, REPORTS_DIR = _o_bt, _o_wfo, _o_rp
+
+
+def _run_core(args, strategy_name: str = '') -> int:
     # Required on Windows/macOS (spawn start method) to prevent recursive spawning
     multiprocessing.freeze_support()
-
-    parser = build_arg_parser()
-    args   = parser.parse_args()
 
     logger = setup_logging(args.output_tag)
     if args.verbose:
@@ -1933,7 +2006,8 @@ def main() -> None:
     data_end   = pd.Timestamp(args.end_date)
 
     # -----------------------------------------------------------------------
-    # Select parameter grid and report optimisation configuration
+    # Select parameter grid (already overridden by _run_for_strategy for this
+    # strategy via module-level globals PARAM_GRID / FIXED_PARAMS / BT_DEFAULTS)
     # -----------------------------------------------------------------------
     grid         = PARAM_GRID_FAST if args.fast_mode else PARAM_GRID
     param_combos = build_param_combinations(grid)
@@ -1965,7 +2039,7 @@ def main() -> None:
     metadata = load_qualified_universe()
     if not metadata:
         logger.error("No symbols found — check data_cache/qualified/qualified_symbols.json")
-        sys.exit(1)
+        return 1
     logger.info(f"Universe: {len(metadata)} symbols")
 
     logger.info("Loading price data ...")
@@ -1986,7 +2060,7 @@ def main() -> None:
 
     if not price_data:
         logger.error("No price data loaded — check data_cache/consolidated/")
-        sys.exit(1)
+        return 1
 
     vix_data = load_vix_data()
     logger.info(
@@ -2199,6 +2273,37 @@ def run_walk_forward_optimization(
         "stability":    stability,
         "final_params": final_params,
     }
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
+    global logger
+    logger = setup_logging(getattr(args, "output_tag", ""))
+    logger.info("=" * 70)
+    logger.info("Script 17 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

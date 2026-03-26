@@ -82,6 +82,8 @@ Architecture: v3.2 (Feb 2026)
 """
 
 import sys
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 import json
 import logging
 import argparse
@@ -1733,6 +1735,7 @@ Examples:
         help="Compute and display results without writing any output files.",
     )
 
+    add_strategy_argument(parser)
     return parser.parse_args()
 
 
@@ -3167,8 +3170,32 @@ def run_year_mode(
 # MAIN ORCHESTRATOR
 # ============================================================================
 
-def main() -> int:
-    args = parse_arguments()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 22 for one strategy with namespaced I/O paths."""
+    global REPORTS_DIR
+
+    strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, 'performance')
+    strat_signals.mkdir(parents=True, exist_ok=True)
+    strat_portfolio.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Signals   : {strat_signals}")
+    logger.info(f"[{strategy.name}] Portfolio : {strat_portfolio}")
+    logger.info(f"[{strategy.name}] Reports   : {strat_reports}")
+
+    _orig_reports = REPORTS_DIR
+    REPORTS_DIR = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        REPORTS_DIR = _orig_reports
+
+
+def _run_core(args, strategy_name: str = '') -> int:
 
     # ── YEAR MODE — branch early ──────────────────────────────────────────────
     if getattr(args, "year", None):
@@ -3256,6 +3283,35 @@ def main() -> int:
         if pdf_path:
             logger.info(f"  → PDF  : {pdf_path}")
     return 0
+
+
+def main() -> int:
+    args = parse_arguments()
+    logger.info("=" * 70)
+    logger.info("Script 22 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1221 @@
+{
+  "meta": {
+    "script": "17_walk_forward_optimizer.py",
+    "architecture": "v3.8",
+    "start_date": "2020-01-01",
+    "end_date": "2025-12-31",
+    "available_months": 71,
+    "initial_equity": 20000.0,
+    "is_months_requested": 24,
+    "oos_months_requested": 12,
+    "roll_months_requested": 6,
+    "is_months_actual": 24,
+    "oos_months_actual": 12,
+    "roll_months_actual": 6,
+    "n_windows": 7,
+    "grid_mode": "FULL",
+    "n_combinations": 150,
+    "n_indicator_buckets": 5,
+    "n_workers": 3,
+    "elapsed_seconds": 23432.3,
+    "output_tag": "exp_roc_2020",
+    "param_grid": {
+      "sma_slow": [
+        150,
+        200,
+        250,
+        300,
+        350
+      ],
+      "trail_stop_mult": [
+        4.0,
+        4.5,
+        5.0,
+        5.5,
+        6.0,
+        6.5
+      ],
+      "max_positions": [
+        30,
+        35,
+        40,
+        45,
+        50
+      ]
+    },
+    "fixed_params": {
+      "sma_fast": 100,
+      "adx_threshold": 25,
+      "init_stop_mult": 2.5,
+      "trail_activation": 0.08,
+      "risk_per_trade": 0.02,
+      "pos_floor_pct": 0.005,
+      "pos_ceil_pct": 0.08,
+      "cost_bps": 10,
+      "momentum_formula": "roc_weighted",
+      "roc_periods": [
+        20,
+        60,
+        120
+      ],
+      "roc_weights": [
+        0.2,
+        0.3,
+        0.5
+      ]
+    },
+    "optimisations": [
+      "OPT-1 indicator_cache",
+      "OPT-3 price_preslice",
+      "OPT-4 oos_ind_reuse",
+      "OPT-5 early_exit",
+      "OPT-2 parallel"
+    ]
+  },
+  "stability": {
+    "n_windows": 7,
+    "n_normal_windows": 6,
+    "n_inverted_windows": 1,
+    "avg_is_sharpe": 0.7317,
+    "avg_oos_sharpe": 0.2264,
+    "avg_is_sharpe_normal": 0.8652,
+    "avg_oos_sharpe_normal": 0.1552,
+    "stability_ratio": 0.1794,
+    "stability_grade": "FAIL",
+    "oos_positive_windows": 4,
+    "oos_consistency": 0.5714,
+    "oos_consistency_grade": "FAIL",
+    "oos_sharpe_trend_slope": 0.311304,
+    "recent_window_n": 5,
+    "recent_stability_ratio": 0.9914,
+    "recent_stability_grade": "EXCELLENT",
+    "recent_avg_is_sharpe": 0.5325,
+    "recent_avg_oos_sharpe": 0.5279,
+    "recent_oos_positive_windows": 4,
+    "recent_oos_consistency": 0.8,
+    "recent_consistency_grade": "PASS",
+    "recent_oos_sharpes": [
+      -0.1261,
+      0.6533,
+      0.693,
+      0.09,
+      1.4547
+    ],
+    "positive_signals": [
+      "IMPROVING_TREND: Recent 5-window stability (0.991) significantly exceeds all-window stability (0.179) \u2014 strategy performance improving over time"
+    ],
+    "param_cv": {
+      "sma_slow": {
+        "mean": 264.2857,
+        "std": 24.3975,
+        "cv": 0.0923,
+        "grade": "EXCELLENT"
+      },
+      "trail_stop_mult": {
+        "mean": 4.8571,
+        "std": 0.748,
+        "cv": 0.154,
+        "grade": "GOOD"
+      },
+      "max_positions": {
+        "mean": 44.2857,
+        "std": 4.4987,
+        "cv": 0.1016,
+        "grade": "GOOD"
+      }
+    },
+    "param_edges": {
+      "sma_slow": {
+        "edge_hits": 0,
+        "total_windows": 7,
+        "pct_at_edge": 0.0
+      },
+      "trail_stop_mult": {
+        "edge_hits": 2,
+        "total_windows": 7,
+        "pct_at_edge": 0.2857
+      },
+      "max_positions": {
+        "edge_hits": 2,
+        "total_windows": 7,
+        "pct_at_edge": 0.2857
+      }
+    },
+    "red_flags": []
+  },
+  "final_params": {
+    "recommended": {
+      "sma_slow": 250,
+      "trail_stop_mult": 5.0,
+      "max_positions": 40
+    },
+    "full_params": {
+      "sma_fast": 100,
+      "sma_slow": 250,
+      "adx_threshold": 25,
+      "adx_weak": 15.0,
+      "adx_weakness_days": 3,
+      "momentum_period": 250,
+      "init_stop_mult": 2.5,
+      "trail_stop_mult": 5.0,
+      "trail_activation": 0.08,
+      "max_positions": 40,
+      "risk_per_trade": 0.02,
+      "pos_floor_pct": 0.005,
+      "pos_ceil_pct": 0.08,
+      "limit_slip": 0.005,
+      "limit_cancel_days": 2,
+      "slippage_stock": 0.0005,
+      "slippage_crypto": 0.001,
+      "cost_bps": 10,
+      "initial_equity": 50000.0,
+      "cb_drawdown": -0.3,
+      "cb_recovery_pct": 0.05,
+      "cb_min_halt_days": 30,
+      "cb_vix_enter": 40.0,
+      "cb_vix_resume": 30.0,
+      "cb_vix_resume_days": 3,
+      "momentum_formula": "roc_weighted",
+      "roc_periods": [
+        20,
+        60,
+        120
+      ],
+      "roc_weights": [
+        0.2,
+        0.3,
+        0.5
+      ]
+    },
+    "median_oos_sharpe": 1.4547,
+    "top5_candidates": [
+      {
+        "params": {
+          "sma_slow": 250,
+          "trail_stop_mult": 5.0,
+          "max_positions": 40
+        },
+        "median_oos_sharpe": 1.4547,
+        "adj_score": 1.4547,
+        "n_windows_selected": 1
+      },
+      {
+        "params": {
+          "sma_slow": 300,
+          "trail_stop_mult": 6.0,
+          "max_positions": 40
+        },
+        "median_oos_sharpe": 0.693,
+        "adj_score": 0.693,
+        "n_windows_selected": 1
+      },
+      {
+        "params": {
+          "sma_slow": 250,
+          "trail_stop_mult": 4.0,
+          "max_positions": 50
+        },
+        "median_oos_sharpe": 0.2636,
+        "adj_score": 0.1636,
+        "n_windows_selected": 2
+      },
+      {
+        "params": {
+          "sma_slow": 300,
+          "trail_stop_mult": 4.5,
+          "max_positions": 40
+        },
+        "median_oos_sharpe": 0.09,
+        "adj_score": 0.09,
+        "n_windows_selected": 1
+      },
+      {
+        "params": {
+          "sma_slow": 250,
+          "trail_stop_mult": 5.0,
+          "max_positions": 45
+        },
+        "median_oos_sharpe": -0.1876,
+        "adj_score": -0.1876,
+        "n_windows_selected": 1
+      }
+    ],
+    "selection_rationale": "Highest median OOS Sharpe after edge penalty adjustment. Stability ratio=0.179 (FAIL), OOS consistency=57.1% (FAIL)."
+  },
+  "windows": [
+    {
+      "window_id": 1,
+      "is_start": "2020-01-01",
+      "is_end": "2021-12-31",
+      "oos_start": "2022-01-01",
+      "oos_end": "2022-12-31",
+      "is_best_sharpe": 1.7511,
+      "oos_sharpe": -0.9927,
+      "window_stability": -0.5669,
+      "window_stability_flag": "normal",
+      "best_params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 5.5,
+        "max_positions": 45
+      },
+      "oos_metrics": {
+        "oos_sharpe": -0.9927,
+        "oos_cagr": -3.3,
+        "oos_max_dd": -9.42,
+        "oos_trades": 26,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=4"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.7511,
+          "is_cagr": 79.61,
+          "is_max_dd": -24.1,
+          "is_trades": 116
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.7422,
+          "is_cagr": 80.81,
+          "is_max_dd": -21.94,
+          "is_trades": 114
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.7393,
+          "is_cagr": 81.42,
+          "is_max_dd": -23.27,
+          "is_trades": 111
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.5,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.7203,
+          "is_cagr": 77.38,
+          "is_max_dd": -21.72,
+          "is_trades": 125
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.7143,
+          "is_cagr": 80.43,
+          "is_max_dd": -23.6,
+          "is_trades": 111
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.5,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.6835,
+          "is_cagr": 77.6,
+          "is_max_dd": -23.68,
+          "is_trades": 119
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 6.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.6615,
+          "is_cagr": 75.21,
+          "is_max_dd": -23.24,
+          "is_trades": 119
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.0,
+            "max_positions": 35
+          },
+          "is_sharpe": 1.6543,
+          "is_cagr": 64.25,
+          "is_max_dd": -19.13,
+          "is_trades": 113
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 6.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.6475,
+          "is_cagr": 74.76,
+          "is_max_dd": -23.64,
+          "is_trades": 119
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 5.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.6461,
+          "is_cagr": 71.86,
+          "is_max_dd": -23.14,
+          "is_trades": 126
+        }
+      ],
+      "elapsed_seconds": 4152.4
+    },
+    {
+      "window_id": 2,
+      "is_start": "2020-07-01",
+      "is_end": "2022-06-30",
+      "oos_start": "2022-07-01",
+      "oos_end": "2023-06-30",
+      "is_best_sharpe": 1.3101,
+      "oos_sharpe": -0.1876,
+      "window_stability": -0.1432,
+      "window_stability_flag": "normal",
+      "best_params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 5.0,
+        "max_positions": 45
+      },
+      "oos_metrics": {
+        "oos_sharpe": -0.1876,
+        "oos_cagr": 1.6,
+        "oos_max_dd": -10.21,
+        "oos_trades": 81,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=16"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.3101,
+          "is_cagr": 52.15,
+          "is_max_dd": -26.06,
+          "is_trades": 110
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.2881,
+          "is_cagr": 50.24,
+          "is_max_dd": -24.73,
+          "is_trades": 120
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 5.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 1.2779,
+          "is_cagr": 47.06,
+          "is_max_dd": -27.38,
+          "is_trades": 115
+        },
+        {
+          "params": {
+            "sma_slow": 200,
+            "trail_stop_mult": 5.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.2629,
+          "is_cagr": 50.35,
+          "is_max_dd": -27.52,
+          "is_trades": 123
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 5.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.2593,
+          "is_cagr": 50.03,
+          "is_max_dd": -27.4,
+          "is_trades": 118
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 5.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 1.2443,
+          "is_cagr": 47.66,
+          "is_max_dd": -25.97,
+          "is_trades": 121
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 1.2271,
+          "is_cagr": 49.41,
+          "is_max_dd": -24.91,
+          "is_trades": 106
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 5.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.214,
+          "is_cagr": 48.32,
+          "is_max_dd": -26.81,
+          "is_trades": 121
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 6.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.2139,
+          "is_cagr": 50.19,
+          "is_max_dd": -32.25,
+          "is_trades": 103
+        },
+        {
+          "params": {
+            "sma_slow": 200,
+            "trail_stop_mult": 6.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 1.1959,
+          "is_cagr": 49.43,
+          "is_max_dd": -32.99,
+          "is_trades": 104
+        }
+      ],
+      "elapsed_seconds": 3146.5
+    },
+    {
+      "window_id": 3,
+      "is_start": "2021-01-01",
+      "is_end": "2022-12-31",
+      "oos_start": "2023-01-01",
+      "oos_end": "2023-12-31",
+      "is_best_sharpe": 0.5443,
+      "oos_sharpe": -0.1261,
+      "window_stability": -0.2317,
+      "window_stability_flag": "normal",
+      "best_params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 4.0,
+        "max_positions": 50
+      },
+      "oos_metrics": {
+        "oos_sharpe": -0.1261,
+        "oos_cagr": 0.27,
+        "oos_max_dd": -10.85,
+        "oos_trades": 129,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=17"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 4.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.5443,
+          "is_cagr": 14.12,
+          "is_max_dd": -24.43,
+          "is_trades": 100
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 4.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.5113,
+          "is_cagr": 13.36,
+          "is_max_dd": -24.91,
+          "is_trades": 97
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.4898,
+          "is_cagr": 13.22,
+          "is_max_dd": -26.18,
+          "is_trades": 111
+        },
+        {
+          "params": {
+            "sma_slow": 200,
+            "trail_stop_mult": 4.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.4421,
+          "is_cagr": 12.16,
+          "is_max_dd": -27.46,
+          "is_trades": 106
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.4309,
+          "is_cagr": 11.86,
+          "is_max_dd": -25.61,
+          "is_trades": 112
+        },
+        {
+          "params": {
+            "sma_slow": 200,
+            "trail_stop_mult": 4.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.4186,
+          "is_cagr": 11.71,
+          "is_max_dd": -27.52,
+          "is_trades": 103
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.5,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.4071,
+          "is_cagr": 11.65,
+          "is_max_dd": -26.71,
+          "is_trades": 109
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 4.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.4043,
+          "is_cagr": 11.1,
+          "is_max_dd": -24.26,
+          "is_trades": 101
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 4.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.4011,
+          "is_cagr": 11.1,
+          "is_max_dd": -24.34,
+          "is_trades": 107
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.3896,
+          "is_cagr": 10.81,
+          "is_max_dd": -25.27,
+          "is_trades": 101
+        }
+      ],
+      "elapsed_seconds": 2949.2
+    },
+    {
+      "window_id": 4,
+      "is_start": "2021-07-01",
+      "is_end": "2023-06-30",
+      "oos_start": "2023-07-01",
+      "oos_end": "2024-06-30",
+      "is_best_sharpe": -0.0695,
+      "oos_sharpe": 0.6533,
+      "window_stability": null,
+      "window_stability_flag": "inverted_or_zero_is",
+      "best_params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 4.0,
+        "max_positions": 50
+      },
+      "oos_metrics": {
+        "oos_sharpe": 0.6533,
+        "oos_cagr": 17.18,
+        "oos_max_dd": -14.67,
+        "oos_trades": 117,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=11"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 4.0,
+            "max_positions": 50
+          },
+          "is_sharpe": -0.0695,
+          "is_cagr": 2.68,
+          "is_max_dd": -27.67,
+          "is_trades": 140
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.0,
+            "max_positions": 50
+          },
+          "is_sharpe": -0.0748,
+          "is_cagr": 2.41,
+          "is_max_dd": -33.57,
+          "is_trades": 140
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.0,
+            "max_positions": 30
+          },
+          "is_sharpe": -0.0901,
+          "is_cagr": 2.66,
+          "is_max_dd": -32.03,
+          "is_trades": 131
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.5,
+            "max_positions": 50
+          },
+          "is_sharpe": -0.1166,
+          "is_cagr": 1.51,
+          "is_max_dd": -34.53,
+          "is_trades": 140
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.0,
+            "max_positions": 35
+          },
+          "is_sharpe": -0.1272,
+          "is_cagr": 1.84,
+          "is_max_dd": -35.69,
+          "is_trades": 147
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 4.5,
+            "max_positions": 35
+          },
+          "is_sharpe": -0.1378,
+          "is_cagr": 1.83,
+          "is_max_dd": -32.37,
+          "is_trades": 117
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 4.5,
+            "max_positions": 50
+          },
+          "is_sharpe": -0.1624,
+          "is_cagr": 0.87,
+          "is_max_dd": -30.97,
+          "is_trades": 138
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.0,
+            "max_positions": 45
+          },
+          "is_sharpe": -0.167,
+          "is_cagr": 0.34,
+          "is_max_dd": -33.02,
+          "is_trades": 115
+        },
+        {
+          "params": {
+            "sma_slow": 150,
+            "trail_stop_mult": 5.0,
+            "max_positions": 50
+          },
+          "is_sharpe": -0.1703,
+          "is_cagr": 0.47,
+          "is_max_dd": -35.38,
+          "is_trades": 136
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 45
+          },
+          "is_sharpe": -0.1862,
+          "is_cagr": 0.67,
+          "is_max_dd": -30.7,
+          "is_trades": 133
+        }
+      ],
+      "elapsed_seconds": 3052.5
+    },
+    {
+      "window_id": 5,
+      "is_start": "2022-01-01",
+      "is_end": "2023-12-31",
+      "oos_start": "2024-01-01",
+      "oos_end": "2024-12-31",
+      "is_best_sharpe": 0.2114,
+      "oos_sharpe": 0.693,
+      "window_stability": 3.2781,
+      "window_stability_flag": "normal",
+      "best_params": {
+        "sma_slow": 300,
+        "trail_stop_mult": 6.0,
+        "max_positions": 40
+      },
+      "oos_metrics": {
+        "oos_sharpe": 0.693,
+        "oos_cagr": 21.6,
+        "oos_max_dd": -14.9,
+        "oos_trades": 119,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=15"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 6.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.2114,
+          "is_cagr": 7.53,
+          "is_max_dd": -11.77,
+          "is_trades": 123
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 6.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.1955,
+          "is_cagr": 7.27,
+          "is_max_dd": -13.4,
+          "is_trades": 127
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 5.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.1864,
+          "is_cagr": 7.1,
+          "is_max_dd": -12.61,
+          "is_trades": 126
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 6.5,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.1845,
+          "is_cagr": 7.07,
+          "is_max_dd": -12.42,
+          "is_trades": 123
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 6.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.1799,
+          "is_cagr": 7.0,
+          "is_max_dd": -14.05,
+          "is_trades": 125
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 5.5,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.1773,
+          "is_cagr": 6.95,
+          "is_max_dd": -12.05,
+          "is_trades": 123
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 6.0,
+            "max_positions": 30
+          },
+          "is_sharpe": 0.1743,
+          "is_cagr": 6.87,
+          "is_max_dd": -11.66,
+          "is_trades": 111
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 5.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.1659,
+          "is_cagr": 6.76,
+          "is_max_dd": -13.4,
+          "is_trades": 127
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 6.5,
+            "max_positions": 30
+          },
+          "is_sharpe": 0.1605,
+          "is_cagr": 6.65,
+          "is_max_dd": -11.92,
+          "is_trades": 110
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 5.5,
+            "max_positions": 30
+          },
+          "is_sharpe": 0.1356,
+          "is_cagr": 6.26,
+          "is_max_dd": -11.73,
+          "is_trades": 111
+        }
+      ],
+      "elapsed_seconds": 3463.7
+    },
+    {
+      "window_id": 6,
+      "is_start": "2022-07-01",
+      "is_end": "2024-06-30",
+      "oos_start": "2024-07-01",
+      "oos_end": "2025-06-30",
+      "is_best_sharpe": 0.5762,
+      "oos_sharpe": 0.09,
+      "window_stability": 0.1562,
+      "window_stability_flag": "normal",
+      "best_params": {
+        "sma_slow": 300,
+        "trail_stop_mult": 4.5,
+        "max_positions": 40
+      },
+      "oos_metrics": {
+        "oos_sharpe": 0.09,
+        "oos_cagr": 5.04,
+        "oos_max_dd": -19.96,
+        "oos_trades": 132,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=14"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.5,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.5762,
+          "is_cagr": 15.64,
+          "is_max_dd": -12.0,
+          "is_trades": 171
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 4.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.5597,
+          "is_cagr": 15.24,
+          "is_max_dd": -10.88,
+          "is_trades": 179
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.5425,
+          "is_cagr": 14.87,
+          "is_max_dd": -12.02,
+          "is_trades": 177
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.4599,
+          "is_cagr": 12.89,
+          "is_max_dd": -11.5,
+          "is_trades": 178
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.5,
+            "max_positions": 35
+          },
+          "is_sharpe": 0.446,
+          "is_cagr": 12.41,
+          "is_max_dd": -11.08,
+          "is_trades": 155
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.4395,
+          "is_cagr": 12.44,
+          "is_max_dd": -11.31,
+          "is_trades": 187
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.5,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.3823,
+          "is_cagr": 11.64,
+          "is_max_dd": -16.76,
+          "is_trades": 180
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.3755,
+          "is_cagr": 11.28,
+          "is_max_dd": -16.97,
+          "is_trades": 178
+        },
+        {
+          "params": {
+            "sma_slow": 350,
+            "trail_stop_mult": 4.5,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.3726,
+          "is_cagr": 10.67,
+          "is_max_dd": -14.69,
+          "is_trades": 180
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.5,
+            "max_positions": 30
+          },
+          "is_sharpe": 0.3606,
+          "is_cagr": 10.48,
+          "is_max_dd": -10.64,
+          "is_trades": 146
+        }
+      ],
+      "elapsed_seconds": 3238.2
+    },
+    {
+      "window_id": 7,
+      "is_start": "2023-01-01",
+      "is_end": "2024-12-31",
+      "oos_start": "2025-01-01",
+      "oos_end": "2025-12-31",
+      "is_best_sharpe": 0.798,
+      "oos_sharpe": 1.4547,
+      "window_stability": 1.8229,
+      "window_stability_flag": "normal",
+      "best_params": {
+        "sma_slow": 250,
+        "trail_stop_mult": 5.0,
+        "max_positions": 40
+      },
+      "oos_metrics": {
+        "oos_sharpe": 1.4547,
+        "oos_cagr": 54.17,
+        "oos_max_dd": -16.19,
+        "oos_trades": 128,
+        "oos_diagnostics": [
+          "FORCE_CLOSED=18"
+        ]
+      },
+      "n_combos_tested": 150,
+      "top10_is_combos": [
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.798,
+          "is_cagr": 24.32,
+          "is_max_dd": -18.01,
+          "is_trades": 222
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.5,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.7258,
+          "is_cagr": 22.33,
+          "is_max_dd": -16.73,
+          "is_trades": 213
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.7118,
+          "is_cagr": 22.0,
+          "is_max_dd": -17.26,
+          "is_trades": 231
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.7045,
+          "is_cagr": 21.72,
+          "is_max_dd": -16.45,
+          "is_trades": 229
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.5,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.7039,
+          "is_cagr": 21.71,
+          "is_max_dd": -16.42,
+          "is_trades": 223
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 6.0,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.7001,
+          "is_cagr": 21.67,
+          "is_max_dd": -16.77,
+          "is_trades": 214
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 45
+          },
+          "is_sharpe": 0.6852,
+          "is_cagr": 20.82,
+          "is_max_dd": -16.94,
+          "is_trades": 236
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 4.5,
+            "max_positions": 40
+          },
+          "is_sharpe": 0.6559,
+          "is_cagr": 19.81,
+          "is_max_dd": -19.29,
+          "is_trades": 235
+        },
+        {
+          "params": {
+            "sma_slow": 250,
+            "trail_stop_mult": 5.0,
+            "max_positions": 50
+          },
+          "is_sharpe": 0.646,
+          "is_cagr": 19.87,
+          "is_max_dd": -16.78,
+          "is_trades": 230
+        },
+        {
+          "params": {
+            "sma_slow": 300,
+            "trail_stop_mult": 4.0,
+            "max_positions": 35
+          },
+          "is_sharpe": 0.6078,
+          "is_cagr": 17.9,
+          "is_max_dd": -15.47,
+          "is_trades": 223
+        }
+      ],
+      "elapsed_seconds": 3429.7
+    }
+  ],
+  "generated_at": "2026-03-21T13:12:58.327207"
+}

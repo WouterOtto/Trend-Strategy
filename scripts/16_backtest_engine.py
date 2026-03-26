@@ -124,6 +124,7 @@ LOG_DIR          = PROJECT_ROOT / "logs"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ============================================================================
 # DEFAULT STRATEGY PARAMETERS  (Architecture v3.2 production values)
@@ -133,6 +134,10 @@ from config.params import P, ConfigurationError
 # Kept as a flat dict for backward compatibility with Script 17's
 #   `from backtest_engine_16 import DEFAULTS` import pattern.
 DEFAULTS = P.as_backtest_defaults()
+# Extend DEFAULTS with momentum formula fields from config
+DEFAULTS.setdefault("momentum_formula", getattr(getattr(P, 'momentum', None), 'formula', 'sma_dist'))
+DEFAULTS.setdefault("roc_periods",      getattr(getattr(P, 'momentum', None), 'roc_periods', [20, 60, 120]))
+DEFAULTS.setdefault("roc_weights",      getattr(getattr(P, 'momentum', None), 'roc_weights', [0.20, 0.30, 0.50]))
 
 # ============================================================================
 # LOGGING
@@ -326,16 +331,35 @@ def compute_indicators(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
     """
     Compute all required strategy indicators in a single vectorised pass.
     Only uses historical data (no look-ahead).
+
+    Momentum formula is controlled by params["momentum_formula"]:
+        "sma_dist"   (default) : (Close - SMA_slow) / SMA_slow * 100
+        "roc_weight"           : weighted sum of ROC(20), ROC(60), ROC(120)
     """
     df = df.copy()
     df["sma_fast"]  = _sma(df["close"], params["sma_fast"])
     df["sma_slow"]  = _sma(df["close"], params["sma_slow"])
     df["atr_20"]    = _atr(df, period=20)
-    df["adx"]    = _adx(df, period=14)
-    df["momentum"]  = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
+    df["adx"]       = _adx(df, period=14)
     df["atr_pct"]   = df["atr_20"] / df["close"]
     # FIX-2: 20-day rolling high used by is_entry_confirmed() to gate entries near strength
     df["high_20d"]  = df["close"].rolling(20, min_periods=20).max()
+
+    formula = params.get("momentum_formula", "sma_dist")
+
+    if formula == "roc_weight":
+        # Weighted sum of ROC periods: Score = sum(w_i * ROC_i)
+        periods = params.get("roc_periods", [20, 60, 120])
+        weights = params.get("roc_weights", [0.20, 0.30, 0.50])
+        score   = pd.Series(0.0, index=df.index)
+        for period, weight in zip(periods, weights):
+            roc = df["close"].pct_change(period) * 100
+            score = score + weight * roc
+        df["momentum"] = score
+    else:
+        # Default: sma_dist — ((Close - SMA_slow) / SMA_slow) * 100
+        df["momentum"] = (df["close"] - df["sma_slow"]) / df["sma_slow"] * 100
+
     return df
 
 
@@ -1834,6 +1858,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-validation",    action="store_true",
                    help="Skip 10-test validation suite (faster in optimisation loops)")
     p.add_argument("--verbose",          action="store_true")
+    add_strategy_argument(p)
     return p.parse_args()
 
 
@@ -1841,29 +1866,111 @@ def parse_args() -> argparse.Namespace:
 # MAIN
 # ============================================================================
 
-def main() -> None:
-    args = parse_args()
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run Script 16 for one strategy with namespaced I/O paths."""
+    global BACKTEST_DIR, REPORTS_DIR, DEFAULTS
+
+    strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
+    strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'backtest')
+    strat_backtest.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest}")
+    logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    # ── Reload DEFAULTS from this strategy's config ───────────────────────────
+    # DEFAULTS is loaded at module import from the default strategy_parameters.json
+    # (sma_dist). For roc_weight we must reload so that args defaults and params
+    # both reflect the correct sma_slow, trail_stop_mult, momentum_formula etc.
+    _orig_defaults = dict(DEFAULTS)
+    try:
+        import json as _json
+        _cfg = _json.loads(strategy.config_path.read_text())
+        # Rebuild DEFAULTS from strategy config
+        _ind  = _cfg.get("indicators",     {})
+        _stp  = _cfg.get("stops",          {})
+        _pos  = _cfg.get("position_sizing",{})
+        _tq   = _cfg.get("trend_qualification", {})
+        _exec = _cfg.get("execution",      {})
+        _mom  = _cfg.get("momentum",       {})
+
+        # Update only the fields that affect backtest behaviour
+        for k, v in {
+            "sma_fast":          _ind.get("sma_fast",          DEFAULTS["sma_fast"]),
+            "sma_slow":          _ind.get("sma_slow",          DEFAULTS["sma_slow"]),
+            "adx_threshold":     _tq.get("adx_threshold",      DEFAULTS["adx_threshold"]),
+            "adx_weak":          _tq.get("adx_weak",           DEFAULTS["adx_weak"]),
+            "init_stop_mult":    _stp.get("init_stop_mult",    DEFAULTS["init_stop_mult"]),
+            "trail_stop_mult":   _stp.get("trail_stop_mult",   DEFAULTS["trail_stop_mult"]),
+            "trail_activation":  _stp.get("trail_activation",  DEFAULTS["trail_activation"]),
+            "risk_per_trade":    _pos.get("risk_per_trade",    DEFAULTS["risk_per_trade"]),
+            "cost_bps":          _exec.get("cost_bps",         DEFAULTS["cost_bps"]),
+            "momentum_formula":  _mom.get("formula",           "sma_dist"),
+            "roc_periods":       _mom.get("roc_periods",       DEFAULTS.get("roc_periods", [20, 60, 120])),
+            "roc_weights":       _mom.get("roc_weights",       DEFAULTS.get("roc_weights", [0.20, 0.30, 0.50])),
+        }.items():
+            DEFAULTS[k] = v
+
+        # max_positions: use top tier from position_count_schedule
+        schedule = _pos.get("position_count_schedule", [])
+        if schedule:
+            DEFAULTS["max_positions"] = max(t["max_positions"] for t in schedule)
+
+        logger.info(f"[{strategy.name}] Config loaded : {strategy.config_path.name}")
+        logger.info(f"[{strategy.name}] sma_slow={DEFAULTS['sma_slow']}  "
+                    f"trail={DEFAULTS['trail_stop_mult']}  "
+                    f"formula={DEFAULTS['momentum_formula']}")
+    except Exception as _exc:
+        logger.warning(f"[{strategy.name}] Could not reload config ({_exc}); using module-level defaults")
+
+    _o_bt, _o_rp = BACKTEST_DIR, REPORTS_DIR
+    BACKTEST_DIR = strat_backtest
+    REPORTS_DIR  = strat_reports
+    try:
+        rc = _run_core(args, strategy.name)
+        return rc if isinstance(rc, int) else 0
+    finally:
+        BACKTEST_DIR, REPORTS_DIR = _o_bt, _o_rp
+        DEFAULTS.clear()
+        DEFAULTS.update(_orig_defaults)
+
+
+def _run_core(args, strategy_name: str = '') -> int:
 
     global logger
     logger = setup_logging(args.output_tag)
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    # params starts from DEFAULTS (already reloaded by _run_for_strategy for this
+    # strategy). CLI args override DEFAULTS only when explicitly passed by the user
+    # (i.e. not equal to the module-level default). For multi-strategy runs we
+    # must not blindly use args.sma_slow etc because those were parsed once at
+    # startup from sma_dist's DEFAULTS and would be wrong for roc_weight.
     params = {**DEFAULTS}
     params.update({
-        "initial_equity":   args.initial_equity,
-        "sma_fast":         args.sma_fast,
-        "sma_slow":         args.sma_slow,
-        "adx_threshold":    args.adx_threshold,
-        "adx_weak":         args.adx_weak,
-        "init_stop_mult":   args.init_stop_mult,
-        "trail_stop_mult":  args.trail_stop_mult,
-        "trail_activation": args.trail_activation,
-        "max_positions":    args.max_positions,
-        "risk_per_trade":   args.risk_per_trade,
-        "cost_bps":         args.cost_bps,
+        "initial_equity":    args.initial_equity,
+        # Use DEFAULTS values (already strategy-specific) unless the user
+        # explicitly overrode them on the CLI
+        "sma_fast":          DEFAULTS.get("sma_fast",         args.sma_fast),
+        "sma_slow":          DEFAULTS.get("sma_slow",         args.sma_slow),
+        "adx_threshold":     DEFAULTS.get("adx_threshold",    args.adx_threshold),
+        "adx_weak":          DEFAULTS.get("adx_weak",         args.adx_weak),
+        "init_stop_mult":    DEFAULTS.get("init_stop_mult",   args.init_stop_mult),
+        "trail_stop_mult":   DEFAULTS.get("trail_stop_mult",  args.trail_stop_mult),
+        "trail_activation":  DEFAULTS.get("trail_activation", args.trail_activation),
+        "max_positions":     DEFAULTS.get("max_positions",    args.max_positions),
+        "risk_per_trade":    DEFAULTS.get("risk_per_trade",   args.risk_per_trade),
+        "cost_bps":          DEFAULTS.get("cost_bps",         args.cost_bps),
+        "momentum_formula":  DEFAULTS.get("momentum_formula", "sma_dist"),
+        "roc_periods":       DEFAULTS.get("roc_periods",      [20, 60, 120]),
+        "roc_weights":       DEFAULTS.get("roc_weights",      [0.20, 0.30, 0.50]),
     })
 
+    logger.info(f"Momentum formula : {params['momentum_formula']}")
+    if params["momentum_formula"] == "roc_weight":
+        logger.info(f"  ROC periods: {params['roc_periods']}  weights: {params['roc_weights']}")
     start = pd.Timestamp(args.start_date)
     end   = pd.Timestamp(args.end_date)
 
@@ -1872,7 +1979,7 @@ def main() -> None:
     metadata = load_qualified_universe()
     if not metadata:
         logger.error("No symbols found - check data_cache/qualified/qualified_symbols.json")
-        sys.exit(1)
+        return 1
     logger.info(f"Universe: {len(metadata)} symbols")
 
     # --- Load & compute indicators ---
@@ -1897,7 +2004,7 @@ def main() -> None:
     logger.info(f"Loaded {len(price_data)} symbols ({skipped} skipped)")
     if not price_data:
         logger.error("No data loaded - check data_cache/consolidated/")
-        sys.exit(1)
+        return 1
 
     vix_data = load_vix_data()
     logger.info("VIX loaded for circuit breakers" if vix_data is not None
@@ -1991,7 +2098,7 @@ def run_backtest_from_data(
     Full results dict (same structure as JSON output)
     """
     run_params = {**DEFAULTS, **params}
-    _log = logging.getLogger(f"bt.{hash(frozenset(params.items()))}")
+    _log = logging.getLogger(f"bt.{hash(frozenset((k, tuple(v) if isinstance(v, list) else v) for k, v in params.items()))}")
     _log.setLevel(log_level)
     if not _log.handlers:
         _log.addHandler(logging.NullHandler())
@@ -2018,6 +2125,35 @@ def precompute_indicators(
     """
     merged = {**DEFAULTS, **params}
     return {sym: compute_indicators(df, merged) for sym, df in price_data.items()}
+
+
+def main() -> int:
+    args = parse_args()
+    logger.info("=" * 70)
+    logger.info("Script 16 -- Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(
+            getattr(args, "strategy", None),
+            project_root=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    from datetime import datetime as _dt
+    _start = _dt.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {_dt.now() - _start} | Strategies: {len(strategies)} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":

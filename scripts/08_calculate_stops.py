@@ -111,6 +111,7 @@ LOG_DIR        = PROJECT_ROOT / "logs"
 import sys as _sys
 _sys.path.insert(0, str(PROJECT_ROOT))
 from config.params import P, ConfigurationError
+from config.strategies import resolve_strategies, add_strategy_argument, StrategyDef
 
 # ============================================================================
 # STRATEGY CONSTANTS  (aligned with Architecture v3.2 / strategy_parameters.json)
@@ -1257,6 +1258,7 @@ Dependencies (run in order):
         ),
     )
 
+    add_strategy_argument(parser)
     return parser.parse_args()
 
 
@@ -1264,7 +1266,38 @@ Dependencies (run in order):
 # MAIN
 # ============================================================================
 
-def main() -> int:
+def _run_for_strategy(strategy: "StrategyDef", args) -> int:
+    """Run stop-loss calculation for one strategy, with namespaced I/O paths."""
+    global SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+
+    strat_signals   = strategy.signals_dir(DATA_CACHE_DIR)
+    strat_portfolio = strategy.portfolio_dir(DATA_CACHE_DIR)
+    strat_reports   = strategy.reports_dir(PROJECT_ROOT, "portfolio")
+    strat_signals.mkdir(parents=True, exist_ok=True)
+    strat_portfolio.mkdir(parents=True, exist_ok=True)
+    strat_reports.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
+    logger.info(f"[{strategy.name}] Signals dir   : {strat_signals}")
+    logger.info(f"[{strategy.name}] Portfolio dir  : {strat_portfolio}")
+
+    # Temporarily redirect module-level path globals so all load functions
+    # read from the correct strategy namespace automatically.
+    _orig_sig, _orig_port, _orig_rep = SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR
+    SIGNALS_DIR   = strat_signals
+    PORTFOLIO_DIR = strat_portfolio
+    REPORTS_DIR   = strat_reports
+    try:
+        return _run_core(args, strategy.name)
+    finally:
+        SIGNALS_DIR, PORTFOLIO_DIR, REPORTS_DIR = _orig_sig, _orig_port, _orig_rep
+
+
+def _run_core(args, strategy_name: str = "") -> int:
+    """Core stop-loss logic — called by _run_for_strategy or directly by main()."""
+    tag = f"[{strategy_name}] " if strategy_name else ""
+def _run_core(args, strategy_name: str = '') -> int:
+    tag = f'[{strategy_name}] ' if strategy_name else ''
     start_time = datetime.now()
 
     logger.info("=" * 70)
@@ -1273,8 +1306,6 @@ def main() -> int:
     logger.info("=" * 70)
 
     # ââ Parse & validate arguments âââââââââââââââââââââââââââââââââââââââââ
-    args = parse_arguments()
-
     try:
         validate_date(args.as_of_date)
     except ValueError:
@@ -1410,6 +1441,32 @@ def main() -> int:
         logger.error("All stop calculations failed. Aborting pipeline.")
         return 1
     return 0
+
+
+def main() -> int:
+    args = parse_arguments()
+    logger.info("=" * 70)
+    logger.info("STOP-LOSS CALCULATOR -- Script 8")
+    logger.info("Architecture v3.9 (Mar 2026)")
+    logger.info("=" * 70)
+
+    try:
+        strategies = resolve_strategies(args.strategy, project_root=PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error(f"Strategy resolution failed: {exc}")
+        return 1
+
+    logger.info(f"Strategies : {[s.name for s in strategies]}")
+    start = __import__("datetime").datetime.now()
+    failed = []
+    for strategy in strategies:
+        rc = _run_for_strategy(strategy, args)
+        if rc != 0:
+            failed.append(strategy.name)
+
+    logger.info(f"Duration: {__import__('datetime').datetime.now() - start} | Failed: {failed or 'none'}")
+    return 1 if failed else 0
+
 
 
 if __name__ == "__main__":
