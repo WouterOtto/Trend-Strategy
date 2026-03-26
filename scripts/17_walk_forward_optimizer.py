@@ -419,14 +419,22 @@ def build_windows(
 # HELPER: PARAMETER COMBINATIONS
 # ===========================================================================
 
-def build_param_combinations(grid: Dict) -> List[Dict]:
-    """Return all parameter combinations from the grid."""
+def build_param_combinations(grid: Dict, extra_fixed: Optional[Dict] = None) -> List[Dict]:
+    """
+    Return all parameter combinations from the grid.
+
+    Handles list-of-lists grid values (e.g. roc_weights = [[0.5,0.3,0.2], ...]).
+    extra_fixed is merged after FIXED_PARAMS, allowing per-strategy overrides
+    (e.g. momentum_formula, roc_periods) without mutating the module-level dict.
+    """
     keys   = list(grid.keys())
     values = list(grid.values())
     combos = []
     for combo in itertools.product(*values):
         params = dict(zip(keys, combo))
         params.update(FIXED_PARAMS)
+        if extra_fixed:
+            params.update(extra_fixed)
         combos.append(params)
     return combos
 
@@ -1922,7 +1930,47 @@ Examples:
 
 def _run_for_strategy(strategy: "StrategyDef", args) -> int:
     """Run Script 17 for one strategy with namespaced I/O paths."""
-    global BACKTEST_DIR, WFO_DIR, REPORTS_DIR
+    global BACKTEST_DIR, WFO_DIR, REPORTS_DIR, PARAM_GRID, PARAM_GRID_FAST, FIXED_PARAMS, BT_DEFAULTS
+
+    # ── Load strategy-specific config to override module-level grid globals ──
+    # P is loaded at import time from whichever strategy_parameters.json is on
+    # sys.path first. For multi-strategy runs we must reload from each strategy's
+    # own config file so that the parameter grid, fixed params, and momentum
+    # formula are correct for this strategy.
+    try:
+        import json as _json
+        _cfg = _json.loads(strategy.config_path.read_text())
+
+        # Override parameter grids
+        _og  = _cfg.get("optimization_grid",      {})
+        _ogf = _cfg.get("optimization_grid_fast",  {})
+        _fp  = _cfg.get("fixed_params",            {})
+        _mo  = _cfg.get("momentum", {})
+
+        # Strip _comment keys (not valid grid dimensions)
+        PARAM_GRID      = {k: v for k, v in _og.items()  if not k.startswith("_")}
+        PARAM_GRID_FAST = {k: v for k, v in _ogf.items() if not k.startswith("_")}
+        FIXED_PARAMS    = {k: v for k, v in _fp.items()  if not k.startswith("_")}
+
+        # Inject momentum formula fields into FIXED_PARAMS so every combo carries them
+        FIXED_PARAMS["momentum_formula"] = _mo.get("formula",      "sma_dist")
+        FIXED_PARAMS["roc_periods"]      = _mo.get("roc_periods",  [20, 60, 120])
+        FIXED_PARAMS["roc_weights"]      = _mo.get("roc_weights",  [0.20, 0.30, 0.50])
+
+        # Update BT_DEFAULTS with formula fields so fallback paths also carry them
+        BT_DEFAULTS["momentum_formula"] = _mo.get("formula",      "sma_dist")
+        BT_DEFAULTS["roc_periods"]      = _mo.get("roc_periods",  [20, 60, 120])
+        BT_DEFAULTS["roc_weights"]      = _mo.get("roc_weights",  [0.20, 0.30, 0.50])
+
+        logger.info(f"[{strategy.name}] Config loaded: {strategy.config_path.name}")
+        logger.info(f"[{strategy.name}] Momentum formula : {FIXED_PARAMS['momentum_formula']}")
+        if FIXED_PARAMS["momentum_formula"] == "roc_weight":
+            logger.info(f"[{strategy.name}] ROC periods : {FIXED_PARAMS['roc_periods']}")
+            logger.info(f"[{strategy.name}] ROC weights : {FIXED_PARAMS['roc_weights']}")
+        logger.info(f"[{strategy.name}] Grid dimensions : { {k: len(v) for k,v in PARAM_GRID.items()} }")
+
+    except Exception as _exc:
+        logger.warning(f"[{strategy.name}] Could not reload config ({_exc}); using module-level defaults")
 
     strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
     strat_wfo      = strategy.wfo_dir(DATA_CACHE_DIR)
@@ -1950,9 +1998,6 @@ def _run_core(args, strategy_name: str = '') -> int:
     # Required on Windows/macOS (spawn start method) to prevent recursive spawning
     multiprocessing.freeze_support()
 
-    parser = build_arg_parser()
-    args   = parser.parse_args()
-
     logger = setup_logging(args.output_tag)
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -1961,7 +2006,8 @@ def _run_core(args, strategy_name: str = '') -> int:
     data_end   = pd.Timestamp(args.end_date)
 
     # -----------------------------------------------------------------------
-    # Select parameter grid and report optimisation configuration
+    # Select parameter grid (already overridden by _run_for_strategy for this
+    # strategy via module-level globals PARAM_GRID / FIXED_PARAMS / BT_DEFAULTS)
     # -----------------------------------------------------------------------
     grid         = PARAM_GRID_FAST if args.fast_mode else PARAM_GRID
     param_combos = build_param_combinations(grid)

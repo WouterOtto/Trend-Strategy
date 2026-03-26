@@ -1731,6 +1731,25 @@ Examples:
     return p.parse_args()
 
 
+def _auto_detect_wfo_tag(wfo_dir: Path) -> str:
+    """
+    Scan wfo_dir for the most recently modified wfo_results_*.json file and
+    return the tag portion (e.g. 'full_v1' from 'wfo_results_full_v1.json').
+    Returns '' if no tagged file exists (falls back to untagged lookup).
+    """
+    import re as _re
+    candidates = sorted(
+        wfo_dir.glob("wfo_results_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for p in candidates:
+        m = _re.match(r"wfo_results_(.+)\.json$", p.name)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def _run_for_strategy(strategy: "StrategyDef", args) -> int:
     """Run Script 20 for one strategy with namespaced I/O paths."""
     global BACKTEST_DIR, WFO_DIR, REPORTS_DIR
@@ -1743,15 +1762,36 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
     strat_reports.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
-    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest}")
     logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    # ── Auto-detect WFO tag if not explicitly provided ────────────────────────
+    # WFO runs use --output-tag (e.g. full_v1, fast_v2), which produces files
+    # named wfo_results_full_v1.json etc. Script 20 needs the matching tag to
+    # locate those files. If the user didn't pass --wfo-tag, discover it from
+    # the most recently modified tagged wfo_results file in the WFO directory.
+    import argparse as _ap
+    effective_args = args
+    if not getattr(args, "wfo_tag", ""):
+        auto_tag = _auto_detect_wfo_tag(strat_wfo)
+        if auto_tag:
+            # Shallow-copy args with overridden wfo_tag
+            effective_args = _ap.Namespace(**vars(args))
+            effective_args.wfo_tag = auto_tag
+            logger.info(f"[{strategy.name}] Auto-detected WFO tag: '{auto_tag}'")
+        else:
+            logger.warning(
+                f"[{strategy.name}] No tagged WFO results found in {strat_wfo}. "
+                f"Script 20 will run without WFO data (degradation metrics will be UNKNOWN). "
+                f"Pass --wfo-tag <tag> explicitly to override."
+            )
 
     _o_bt, _o_wfo, _o_rp = BACKTEST_DIR, WFO_DIR, REPORTS_DIR
     BACKTEST_DIR = strat_backtest
     WFO_DIR      = strat_wfo
     REPORTS_DIR  = strat_reports
     try:
-        rc = _run_core(args, strategy.name)
+        rc = _run_core(effective_args, strategy.name)
         return rc if isinstance(rc, int) else 0
     finally:
         BACKTEST_DIR, WFO_DIR, REPORTS_DIR = _o_bt, _o_wfo, _o_rp

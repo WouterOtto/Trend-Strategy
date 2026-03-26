@@ -1868,7 +1868,7 @@ def parse_args() -> argparse.Namespace:
 
 def _run_for_strategy(strategy: "StrategyDef", args) -> int:
     """Run Script 16 for one strategy with namespaced I/O paths."""
-    global BACKTEST_DIR, REPORTS_DIR
+    global BACKTEST_DIR, REPORTS_DIR, DEFAULTS
 
     strat_backtest = strategy.backtest_dir(DATA_CACHE_DIR)
     strat_reports  = strategy.reports_dir(PROJECT_ROOT, 'backtest')
@@ -1876,8 +1876,53 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
     strat_reports.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
-    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest if 'strat_backtest' in dir() else 'n/a'}")
+    logger.info(f"[{strategy.name}] Backtest dir : {strat_backtest}")
     logger.info(f"[{strategy.name}] Reports dir  : {strat_reports}")
+
+    # ── Reload DEFAULTS from this strategy's config ───────────────────────────
+    # DEFAULTS is loaded at module import from the default strategy_parameters.json
+    # (sma_dist). For roc_weight we must reload so that args defaults and params
+    # both reflect the correct sma_slow, trail_stop_mult, momentum_formula etc.
+    _orig_defaults = dict(DEFAULTS)
+    try:
+        import json as _json
+        _cfg = _json.loads(strategy.config_path.read_text())
+        # Rebuild DEFAULTS from strategy config
+        _ind  = _cfg.get("indicators",     {})
+        _stp  = _cfg.get("stops",          {})
+        _pos  = _cfg.get("position_sizing",{})
+        _tq   = _cfg.get("trend_qualification", {})
+        _exec = _cfg.get("execution",      {})
+        _mom  = _cfg.get("momentum",       {})
+
+        # Update only the fields that affect backtest behaviour
+        for k, v in {
+            "sma_fast":          _ind.get("sma_fast",          DEFAULTS["sma_fast"]),
+            "sma_slow":          _ind.get("sma_slow",          DEFAULTS["sma_slow"]),
+            "adx_threshold":     _tq.get("adx_threshold",      DEFAULTS["adx_threshold"]),
+            "adx_weak":          _tq.get("adx_weak",           DEFAULTS["adx_weak"]),
+            "init_stop_mult":    _stp.get("init_stop_mult",    DEFAULTS["init_stop_mult"]),
+            "trail_stop_mult":   _stp.get("trail_stop_mult",   DEFAULTS["trail_stop_mult"]),
+            "trail_activation":  _stp.get("trail_activation",  DEFAULTS["trail_activation"]),
+            "risk_per_trade":    _pos.get("risk_per_trade",    DEFAULTS["risk_per_trade"]),
+            "cost_bps":          _exec.get("cost_bps",         DEFAULTS["cost_bps"]),
+            "momentum_formula":  _mom.get("formula",           "sma_dist"),
+            "roc_periods":       _mom.get("roc_periods",       DEFAULTS.get("roc_periods", [20, 60, 120])),
+            "roc_weights":       _mom.get("roc_weights",       DEFAULTS.get("roc_weights", [0.20, 0.30, 0.50])),
+        }.items():
+            DEFAULTS[k] = v
+
+        # max_positions: use top tier from position_count_schedule
+        schedule = _pos.get("position_count_schedule", [])
+        if schedule:
+            DEFAULTS["max_positions"] = max(t["max_positions"] for t in schedule)
+
+        logger.info(f"[{strategy.name}] Config loaded : {strategy.config_path.name}")
+        logger.info(f"[{strategy.name}] sma_slow={DEFAULTS['sma_slow']}  "
+                    f"trail={DEFAULTS['trail_stop_mult']}  "
+                    f"formula={DEFAULTS['momentum_formula']}")
+    except Exception as _exc:
+        logger.warning(f"[{strategy.name}] Could not reload config ({_exc}); using module-level defaults")
 
     _o_bt, _o_rp = BACKTEST_DIR, REPORTS_DIR
     BACKTEST_DIR = strat_backtest
@@ -1887,6 +1932,8 @@ def _run_for_strategy(strategy: "StrategyDef", args) -> int:
         return rc if isinstance(rc, int) else 0
     finally:
         BACKTEST_DIR, REPORTS_DIR = _o_bt, _o_rp
+        DEFAULTS.clear()
+        DEFAULTS.update(_orig_defaults)
 
 
 def _run_core(args, strategy_name: str = '') -> int:
@@ -1896,22 +1943,29 @@ def _run_core(args, strategy_name: str = '') -> int:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    # params starts from DEFAULTS (already reloaded by _run_for_strategy for this
+    # strategy). CLI args override DEFAULTS only when explicitly passed by the user
+    # (i.e. not equal to the module-level default). For multi-strategy runs we
+    # must not blindly use args.sma_slow etc because those were parsed once at
+    # startup from sma_dist's DEFAULTS and would be wrong for roc_weight.
     params = {**DEFAULTS}
     params.update({
         "initial_equity":    args.initial_equity,
-        "sma_fast":          args.sma_fast,
-        "sma_slow":          args.sma_slow,
-        "adx_threshold":     args.adx_threshold,
-        "adx_weak":          args.adx_weak,
-        "init_stop_mult":    args.init_stop_mult,
-        "trail_stop_mult":   args.trail_stop_mult,
-        "trail_activation":  args.trail_activation,
-        "max_positions":     args.max_positions,
-        "risk_per_trade":    args.risk_per_trade,
-        "cost_bps":          args.cost_bps,
+        # Use DEFAULTS values (already strategy-specific) unless the user
+        # explicitly overrode them on the CLI
+        "sma_fast":          DEFAULTS.get("sma_fast",         args.sma_fast),
+        "sma_slow":          DEFAULTS.get("sma_slow",         args.sma_slow),
+        "adx_threshold":     DEFAULTS.get("adx_threshold",    args.adx_threshold),
+        "adx_weak":          DEFAULTS.get("adx_weak",         args.adx_weak),
+        "init_stop_mult":    DEFAULTS.get("init_stop_mult",   args.init_stop_mult),
+        "trail_stop_mult":   DEFAULTS.get("trail_stop_mult",  args.trail_stop_mult),
+        "trail_activation":  DEFAULTS.get("trail_activation", args.trail_activation),
+        "max_positions":     DEFAULTS.get("max_positions",    args.max_positions),
+        "risk_per_trade":    DEFAULTS.get("risk_per_trade",   args.risk_per_trade),
+        "cost_bps":          DEFAULTS.get("cost_bps",         args.cost_bps),
         "momentum_formula":  DEFAULTS.get("momentum_formula", "sma_dist"),
-        "roc_periods":       DEFAULTS.get("roc_periods", [20, 60, 120]),
-        "roc_weights":       DEFAULTS.get("roc_weights", [0.20, 0.30, 0.50]),
+        "roc_periods":       DEFAULTS.get("roc_periods",      [20, 60, 120]),
+        "roc_weights":       DEFAULTS.get("roc_weights",      [0.20, 0.30, 0.50]),
     })
 
     logger.info(f"Momentum formula : {params['momentum_formula']}")
@@ -2044,7 +2098,7 @@ def run_backtest_from_data(
     Full results dict (same structure as JSON output)
     """
     run_params = {**DEFAULTS, **params}
-    _log = logging.getLogger(f"bt.{hash(frozenset(params.items()))}")
+    _log = logging.getLogger(f"bt.{hash(frozenset((k, tuple(v) if isinstance(v, list) else v) for k, v in params.items()))}")
     _log.setLevel(log_level)
     if not _log.handlers:
         _log.addHandler(logging.NullHandler())
