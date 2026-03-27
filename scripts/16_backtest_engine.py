@@ -347,7 +347,10 @@ def compute_indicators(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
 
     formula = params.get("momentum_formula", "sma_dist")
 
-    if formula == "roc_weight":
+    if formula == "roc_single":
+        period = params.get("roc_periods", [120])[0]
+        df["momentum"] = df["close"].pct_change(period) * 100
+    elif formula == "roc_weight":
         # Weighted sum of ROC periods: Score = sum(w_i * ROC_i)
         periods = params.get("roc_periods", [20, 60, 120])
         weights = params.get("roc_weights", [0.20, 0.30, 0.50])
@@ -1948,21 +1951,34 @@ def _run_core(args, strategy_name: str = '') -> int:
     # (i.e. not equal to the module-level default). For multi-strategy runs we
     # must not blindly use args.sma_slow etc because those were parsed once at
     # startup from sma_dist's DEFAULTS and would be wrong for roc_weight.
+    # Helper: return CLI value if user explicitly overrode it, else DEFAULTS
+    def _cli(key, arg_val):
+        default_val = DEFAULTS.get(key)
+        # If arg_val differs from what's in DEFAULTS, the user explicitly set it
+        return arg_val if arg_val != default_val else default_val
+
     params = {**DEFAULTS}
     params.update({
         "initial_equity":    args.initial_equity,
-        # Use DEFAULTS values (already strategy-specific) unless the user
-        # explicitly overrode them on the CLI
-        "sma_fast":          DEFAULTS.get("sma_fast",         args.sma_fast),
-        "sma_slow":          DEFAULTS.get("sma_slow",         args.sma_slow),
-        "adx_threshold":     DEFAULTS.get("adx_threshold",    args.adx_threshold),
-        "adx_weak":          DEFAULTS.get("adx_weak",         args.adx_weak),
-        "init_stop_mult":    DEFAULTS.get("init_stop_mult",   args.init_stop_mult),
-        "trail_stop_mult":   DEFAULTS.get("trail_stop_mult",  args.trail_stop_mult),
-        "trail_activation":  DEFAULTS.get("trail_activation", args.trail_activation),
-        "max_positions":     DEFAULTS.get("max_positions",    args.max_positions),
-        "risk_per_trade":    DEFAULTS.get("risk_per_trade",   args.risk_per_trade),
-        "cost_bps":          DEFAULTS.get("cost_bps",         args.cost_bps),
+        # Resolution order for each parameter:
+        #   1. If the user passed an explicit CLI value (differs from the argparse
+        #      default, which equals DEFAULTS at parse time) → CLI wins.
+        #      This makes --trail-stop-mult 3.0 and --cost-bps 20 etc. work correctly.
+        #   2. Otherwise use DEFAULTS (already reloaded per strategy by
+        #      _run_for_strategy) → roc_weight gets its own sma_slow/trail etc.
+        #
+        # _cli(key, arg_val) returns arg_val if it was explicitly overridden,
+        # else falls back to the strategy-specific DEFAULTS value.
+        "sma_fast":          _cli("sma_fast",         args.sma_fast),
+        "sma_slow":          _cli("sma_slow",         args.sma_slow),
+        "adx_threshold":     _cli("adx_threshold",    args.adx_threshold),
+        "adx_weak":          _cli("adx_weak",         args.adx_weak),
+        "init_stop_mult":    _cli("init_stop_mult",   args.init_stop_mult),
+        "trail_stop_mult":   _cli("trail_stop_mult",  args.trail_stop_mult),
+        "trail_activation":  _cli("trail_activation", args.trail_activation),
+        "max_positions":     _cli("max_positions",    args.max_positions),
+        "risk_per_trade":    _cli("risk_per_trade",   args.risk_per_trade),
+        "cost_bps":          args.cost_bps,  # always CLI (explicit sweep support)
         "momentum_formula":  DEFAULTS.get("momentum_formula", "sma_dist"),
         "roc_periods":       DEFAULTS.get("roc_periods",      [20, 60, 120]),
         "roc_weights":       DEFAULTS.get("roc_weights",      [0.20, 0.30, 0.50]),

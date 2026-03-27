@@ -532,6 +532,18 @@ def build_args(num: int, ns: argparse.Namespace) -> List[str]:
         if max_positions:
             a += ["--max-positions", str(max_positions)]
 
+        output_tag = getattr(ns, "output_tag", None)
+        if output_tag:
+            a += ["--output-tag", output_tag]
+
+    if num == 17:
+        # Script 17 only: fast-mode grid and parallel workers
+        if getattr(ns, "fast_mode", False):
+            a += ["--fast-mode"]
+        n_workers = getattr(ns, "n_workers", 1)
+        if n_workers and n_workers > 1:
+            a += ["--n-workers", str(n_workers)]
+
     if num == 18:
         # Script 18 (Monte Carlo): only backtest-tag and output-tag are relevant
         output_tag = getattr(ns, "output_tag", None) or getattr(ns, "backtest_tag", None)
@@ -1035,6 +1047,31 @@ def build_parser() -> argparse.ArgumentParser:
             "Override maximum number of portfolio positions. "
             "Used by scripts 8, 10, 11, 16-18."
         ),
+    )
+
+    parser.add_argument(
+        "--fast-mode",
+        action="store_true",
+        default=False,
+        dest="fast_mode",
+        help="Script 17 WFO: use reduced parameter grid (~45 combos). Ignored for other scripts.",
+    )
+
+    parser.add_argument(
+        "--n-workers",
+        metavar="N",
+        dest="n_workers",
+        type=int,
+        default=1,
+        help="Script 17 WFO: parallel workers for grid search (default 1 = serial, max = n indicator buckets).",
+    )
+
+    parser.add_argument(
+        "--output-tag",
+        metavar="TAG",
+        dest="output_tag",
+        default="",
+        help="Tag appended to Script 16/17 output filenames (e.g. fast_v3).",
     )
 
     parser.add_argument(
