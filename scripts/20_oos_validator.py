@@ -405,6 +405,21 @@ def _pct_drop(oos_val: Optional[float], is_val: Optional[float],
         return (oos_val - is_val) / abs(is_val)
 
 
+# Mapping from Script 19 IS metric keys → Script 17 oos_metrics keys.
+# Script 17 stores only: oos_sharpe, oos_cagr, oos_max_dd, oos_trades.
+# The remaining metrics (sortino, profit_factor, win_loss_ratio, calmar,
+# win_rate) are not computed per-window by Script 17 so they remain UNKNOWN.
+# This map covers what IS available and avoids false UNKNOWN for those that are.
+_OOS_METRIC_KEY_MAP: Dict[str, str] = {
+    "sharpe_ratio":    "oos_sharpe",
+    "sharpe":          "oos_sharpe",
+    "cagr":            "oos_cagr",
+    "cagr_pct":        "oos_cagr",
+    "max_drawdown":    "oos_max_dd",
+    "max_drawdown_pct":"oos_max_dd",
+}
+
+
 def _extract_oos_aggregate(
     windows: List[Dict],
     metric_key: str,
@@ -415,20 +430,28 @@ def _extract_oos_aggregate(
     (median, to be robust against outlier windows).
 
     Looks inside window["oos_metrics"] first; falls back to window-level key.
+    Script 17 stores oos_sharpe, oos_cagr, oos_max_dd, oos_trades — the key
+    map above translates IS metric keys to their actual Script 17 equivalents.
     """
+    # Resolve the canonical Script 17 key for this IS metric
+    mapped_key = _OOS_METRIC_KEY_MAP.get(metric_key)
+
     vals = []
     for w in windows:
         v = None
-        # Primary: oos_metrics sub-dict
         oos_m = w.get("oos_metrics", {})
         if oos_m:
-            # Try common OOS metric naming conventions from Script 17
-            for candidate in [f"oos_{metric_key}", metric_key,
-                               f"oos_{metric_key}_pct", f"{metric_key}_pct"]:
-                if candidate in oos_m:
-                    v = oos_m[candidate]
-                    break
-        # Fallback: window-level key
+            # Try mapped key first (highest confidence)
+            if mapped_key and mapped_key in oos_m:
+                v = oos_m[mapped_key]
+            else:
+                # Fallback: try common naming conventions
+                for candidate in [f"oos_{metric_key}", metric_key,
+                                   f"oos_{metric_key}_pct", f"{metric_key}_pct"]:
+                    if candidate in oos_m:
+                        v = oos_m[candidate]
+                        break
+        # Last resort: window-level key
         if v is None and fallback_oos_key and fallback_oos_key in w:
             v = w[fallback_oos_key]
         if v is not None:

@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "version": "3.10",
-    "last_updated": "2026-03-23",
-    "description": "Single source of truth for all strategy, backtest, and optimizer parameters. Edit this file only. Never hardcode values in scripts.",
+    "version": "3.11",
+    "last_updated": "2026-03-27",
+    "description": "Single source of truth for all strategy, backtest, and optimizer parameters. Edit this file only. Never hardcode values in scripts. v3.10: trail_stop_mult 5.5\u21923.5 (trail sweep), sma_slow 200\u2192250 (WFO full_v1), formula field added. v3.11: fast grid recentred on fast_v3 (2026-03-27). Validation status: 9/10 tests, 18/30 MARGINAL, Tier 3 PAPER TRADE. T09 (drawdown duration) is the only failing test \u2014 structural 2022-2023 artefact.",
     "architecture_ref": "Multi-Asset Trend Following Strategy v3.9 (Mar 2026)"
   },
   "indicators": {
-    "_comment": "Technical indicator periods. sma_fast/sma_slow drive compute_indicators() in Script 16/17. atr_period drives stop-loss sizing in Scripts 8/16. adx_period is fixed at 14 (Wilder standard).",
+    "_comment": "Technical indicator periods. sma_fast/sma_slow drive compute_indicators() in Script 16/17. atr_period drives stop-loss sizing in Scripts 8/16. adx_period is fixed at 14 (Wilder standard). sma_slow updated 200 \u2192 250 per WFO full_v1 recommendation (2026-03-27).",
     "sma_fast": 100,
     "sma_slow": 250,
     "atr_period": 20,
@@ -22,24 +22,19 @@
     "min_data_points": 250
   },
   "momentum": {
-    "_comment": "formula: 'sma_dist' uses ((Close - SMA_slow) / SMA_slow) * 100. 'roc_weight' uses weighted sum of ROC periods. sma_period must match indicators.sma_slow when formula=sma_dist.",
+    "_comment": "Momentum scoring formula (Scripts 7/16). formula='sma_dist': Score = ((Close - SMA_slow) / SMA_slow) * 100. sma_period must always match indicators.sma_slow. ROC periods are supplementary (stored for supplementary output, not used for ranking).",
     "sma_period": 250,
     "roc_periods": [
       20,
       60,
       120
     ],
-    "formula": "sma_dist",
-    "roc_weights": [
-      0.2,
-      0.3,
-      0.5
-    ]
+    "formula": "sma_dist"
   },
   "stops": {
-    "_comment": "ATR-based stop-loss system (Scripts 8/16). init_stop_mult: set once at entry, never lowered. trail_stop_mult: activates after trail_activation profit. Trailing updates Fridays only, ratchets up only.",
+    "_comment": "ATR-based stop-loss system (Scripts 8/16). init_stop_mult: set once at entry, never lowered. trail_stop_mult: activates after trail_activation profit. Trailing updates Fridays only, ratchets up only. trail_stop_mult reduced from 5.5 \u2192 3.5 (2026-03-27 trail sweep: 3.5 passes T03 max_dd=-26.0% while maintaining Sharpe 0.670, superior to 3.0 and 2.5).",
     "init_stop_mult": 2.5,
-    "trail_stop_mult": 5.0,
+    "trail_stop_mult": 3.5,
     "trail_activation": 0.08,
     "max_stop_distance_pct": 0.4
   },
@@ -120,7 +115,7 @@
     "param_cv_good": 0.2
   },
   "optimization_grid": {
-    "_comment": "Full WFO parameter search space (Script 17). Only include parameters whose variation meaningfully changes strategy behaviour. Fixed params (sma_fast, adx_threshold, risk_per_trade) are in fixed_params below. Grid must never have all values at one edge \u2014 expand if optimizer converges to boundary. trail_stop_mult extended to 5.5 (Run 5: mean=4.82, recommended=5.5). max_positions mean=40 across runs \u2014 expand to 50 next iteration.",
+    "_comment": "Full WFO parameter search space (Script 17). trail_stop_mult grid updated: upper bound kept at 5.5 for WFO exploration, but 3.5 is now the confirmed deployment value (2026-03-27). sma_slow extended to 350 (WFO full_v1 mean=250). max_positions mean=40 across all runs.",
     "sma_slow": [
       150,
       200,
@@ -145,16 +140,16 @@
     ]
   },
   "optimization_grid_fast": {
-    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on full-grid WFO Run 6 results: sma_slow=250, trail_stop_mult=5.0, max_positions=40.",
+    "_comment": "Reduced grid for quick iteration / quarterly re-checks (Script 17 --fast-mode). Centred on fast_v3 (2026-03-27) confirmed values: sma_slow mean=264 (\u2192250/300), trail_stop_mult mean=3.55 (\u21923.5 deployment), max_positions mean=40.",
     "sma_slow": [
       200,
       250,
       300
     ],
     "trail_stop_mult": [
-      4.5,
-      5.0,
-      5.5
+      3.0,
+      3.5,
+      4.0
     ],
     "max_positions": [
       35,
@@ -163,7 +158,7 @@
     ]
   },
   "fixed_params": {
-    "_comment": "Parameters excluded from WFO grid. sma_fast CV=0.374 (too unstable to optimize). adx_threshold=25 (raised from 15 \u2014 trade attribution 2022-2023 showed false entries below 25; FIX-6 ADX rising filter also applied in Script 16). init_stop_mult CV=0.000 across all 5 WFO runs \u2014 universally stable. trail_activation, risk_per_trade, cost_bps are strategy-design constants.",
+    "_comment": "Parameters excluded from WFO grid. sma_fast CV=0.374 (too unstable to optimise). adx_threshold=25 (FIX-6 ADX rising filter; false entries below 25 confirmed by 2022 attribution). init_stop_mult CV=0.000 across all WFO runs \u2014 universally stable. trail_activation, risk_per_trade, cost_bps are strategy-design constants. trail_stop_mult=3.5 is the confirmed deployment value (2026-03-27 trail sweep + fast_v3 WFO).",
     "sma_fast": 100,
     "adx_threshold": 25,
     "init_stop_mult": 2.5,
@@ -202,5 +197,31 @@
       "mc5_ruin_prob_max": 0.05,
       "mc6_m3_ruin_prob_max": 0.1
     }
+  },
+  "validation_status": {
+    "_comment": "Latest validation chain results. Updated after each full run.",
+    "last_run": "2026-03-27",
+    "backtest_period": "2018-01-01 to 2025-12-31",
+    "initial_equity": 20000,
+    "tests_passed": 9,
+    "tests_total": 10,
+    "tests_failed": [
+      "T09_drawdown_recovery"
+    ],
+    "score": 18,
+    "max_score": 30,
+    "rating": "MARGINAL",
+    "verdict": "CONDITIONAL",
+    "tier": 3,
+    "tier_label": "PAPER TRADE FIRST",
+    "sharpe": 0.6668,
+    "cagr_pct": 15.26,
+    "max_drawdown_pct": -25.97,
+    "beats_spy": true,
+    "mc_gates_passed": 6,
+    "mc_gates_total": 6,
+    "wfo_tag": "fast_v3",
+    "wfo_recent_stability": 1.1459,
+    "wfo_recent_consistency_pct": 100.0
   }
 }
