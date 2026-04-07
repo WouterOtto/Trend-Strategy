@@ -8,22 +8,31 @@ Purpose:
     After trend qualification (Script 6), this script applies a momentum scoring
     formula to every qualified instrument and produces a ranked list.
     The downstream rebalancer (Script 11) uses the top-N entries from this list
-    directly â no further filtering or discretion is applied.
+    directly — no further filtering or discretion is applied.
 
-Momentum Score Formula (v3.2 â production specification):
-    Momentum_Score = ((Close - SMA_200) / SMA_200) Ã 100
+Momentum Score Formulas:
+    sma_dist (default / production):
+        Momentum_Score = ((Close - SMA_slow) / SMA_slow) * 100
 
-    Interpretation:
-        Positive = price is above 200-day SMA (confirmed uptrend)
-        Higher   = stronger distance above long-term mean (stronger trend)
-        Example  : Score of 18.5 → price is 18.5% above its 200-day SMA
+        Interpretation:
+            Positive = price is above SMA_slow (confirmed uptrend)
+            Higher   = stronger distance above long-term mean (stronger trend)
+            Example  : Score of 18.5 -> price is 18.5% above its SMA_slow
 
-    Formula rationale:
-        â¢ Simple and transparent â auditable in one line
-        â¢ Comparable across all instruments and asset classes
-        â¢ Penalises instruments that barely cleared qualification threshold
-        â¢ Rewards instruments with deep, sustained trends
-        â¢ Academic support: Moskowitz, Ooi & Pedersen (2012) â time-series momentum
+        Formula rationale:
+            - Simple and transparent — auditable in one line
+            - Comparable across all instruments and asset classes
+            - Penalises instruments that barely cleared qualification threshold
+            - Rewards instruments with deep, sustained trends
+            - Academic support: Moskowitz, Ooi & Pedersen (2012) — time-series momentum
+
+    roc_weight (experiment / paper trading):
+        Momentum_Score = sum(w_i * ROC_period_i) * 100
+        Default weights: [0.20, 0.30, 0.50] over [20d, 60d, 120d]
+
+        Formula rationale:
+            - Rewards recent acceleration (Jegadeesh & Titman 1993)
+            - Long-biased weight preset confirmed by full_v3 WFO (11/11 windows)
 
     Supplementary ROC metrics (stored, NOT used for ranking):
         ROC_20d  = (Close[t] / Close[t-20])  - 1
@@ -31,10 +40,17 @@ Momentum Score Formula (v3.2 â production specification):
         ROC_120d = (Close[t] / Close[t-120]) - 1
         These are written to the output for transparency and downstream reporting.
 
+Formula name convention:
+    Short names are canonical throughout the codebase:
+        'sma_dist'   — matches scripts 16, 17, strategies.json, strategy_parameters.json
+        'roc_weight' — matches scripts 16, 17, strategies.json, strategy_parameters_exp_roc.json
+    Long-form aliases ('sma_distance', 'roc_weighted') are accepted for backwards
+    compatibility but normalised to the short form before dispatch.
+
 Dependencies:
-    - Script 4: Universe Screener  (qualified_symbols.json â for metadata)
+    - Script 4: Universe Screener  (qualified_symbols.json — for metadata)
     - Script 5: Indicator Calculator (indicators/*.parquet)
-    - Script 6: Trend Qualifier     (qualified_trends.json â must exist)
+    - Script 6: Trend Qualifier     (qualified_trends.json — must exist)
 
 Inputs:
     - data_cache/signals/qualified_trends.json
@@ -43,12 +59,14 @@ Inputs:
     - data_cache/fundamentals/company_info.json
 
 Outputs:
-    - data_cache/signals/momentum_ranked.json    (ranked list, all qualified)
-    - data_cache/signals/momentum_summary.json   (run statistics)
-    - reports/signals/{YYYYMMDD}_momentum_ranked.csv  (human-readable)
+    - data_cache/signals/{strategy}/momentum_ranked.json    (ranked list, all qualified)
+    - data_cache/signals/{strategy}/momentum_summary.json   (run statistics)
+    - reports/signals/{strategy}/{YYYYMMDD}_momentum_ranked.csv  (human-readable)
 
 Execution:
     python scripts/07_rank_momentum.py --as-of-date 2026-01-31
+    python scripts/07_rank_momentum.py --as-of-date 2026-01-31 --strategy sma_dist
+    python scripts/07_rank_momentum.py --as-of-date 2026-01-31 --strategy all
 
 Architecture: v3.9 (Mar 2026) — multi-strategy via --strategy flag
 """
@@ -151,11 +169,11 @@ def load_qualified_trends(as_of_date: str) -> Dict:
         data = json.load(f)
 
     if not data:
-        logger.error("qualified_trends.json is empty â no symbols qualified")
+        logger.error("qualified_trends.json is empty — no symbols qualified")
         sys.exit(1)
 
-    logger.info(f"â Loaded {len(data)} qualified trends from {signals_file}")
-    return data["symbols"] 
+    logger.info(f"Loaded {len(data)} qualified trends from {signals_file}")
+    return data["symbols"]
 
 
 def load_qualified_metadata() -> Dict:
@@ -176,44 +194,39 @@ def load_qualified_metadata() -> Dict:
     with open(metadata_file, 'r') as f:
         raw = json.load(f)
 
-    # qualified_symbols.json is a list of dicts â index by symbol
+    # qualified_symbols.json is a list of dicts — index by symbol
     metadata = {}
     for item in raw:
         sym = item.get('symbol')
         if sym:
             metadata[sym] = item
 
-    logger.info(f"â Loaded metadata for {len(metadata)} symbols")
-    
+    logger.info(f"Loaded metadata for {len(metadata)} symbols")
+
     # Load fundamentals to get instrument_type (asset_class)
-    
     if fundamentals_file.exists():
         try:
             with open(fundamentals_file, 'r') as f:
                 fundamentals = json.load(f)
-            
-            # Merge instrument_type into metadata
+
             matched = 0
             for sym, meta in metadata.items():
                 if sym in fundamentals:
-                    instrument_type = fundamentals[sym].get('instrument_type', '')
-                    meta['instrument_type'] = instrument_type
+                    meta['instrument_type'] = fundamentals[sym].get('instrument_type', '')
                     matched += 1
                 else:
                     meta['instrument_type'] = ''
-            
-            logger.info(f"â Matched instrument_type for {matched}/{len(metadata)} symbols")
+
+            logger.info(f"Matched instrument_type for {matched}/{len(metadata)} symbols")
         except Exception as e:
             logger.warning(f"Failed to load fundamentals: {e}")
-            # Add empty instrument_type to all
             for meta in metadata.values():
                 meta['instrument_type'] = ''
     else:
         logger.warning(f"company_info.json not found at {fundamentals_file}")
-        # Add empty instrument_type to all
         for meta in metadata.values():
             meta['instrument_type'] = ''
-    
+
     return metadata
 
 
@@ -254,6 +267,7 @@ def load_indicator_data(symbol: str) -> Optional[pd.DataFrame]:
         logger.warning(f"Failed to load indicators for {symbol}: {e}")
         return None
 
+
 # ============================================================================
 # MOMENTUM CALCULATION
 # ============================================================================
@@ -269,7 +283,7 @@ def _load_experiment_momentum_config(config_path: str) -> dict:
         raw = _json.load(fh)
     mom = raw.get("momentum", {})
     return {
-        "formula":     mom.get("formula",     "sma_distance"),
+        "formula":     mom.get("formula",     "sma_dist"),
         "sma_period":  mom.get("sma_period",  P.momentum.sma_period),
         "roc_periods": mom.get("roc_periods", list(P.momentum.roc_periods)),
         "roc_weights": mom.get("roc_weights", [0.20, 0.30, 0.50]),
@@ -280,23 +294,38 @@ def calculate_momentum_score(
     df: pd.DataFrame,
     as_of_date: str,
     symbol: str,
-    formula: str = "sma_distance",
+    formula: str = "sma_dist",
     active_roc_periods: Optional[Dict] = None,
     roc_weights: Optional[List[float]] = None,
 ) -> Tuple[Optional[float], Dict]:
     """
     Calculate momentum score using one of two formulas.
 
-    "sma_distance" (default): Score = ((Close - SMA_slow) / SMA_slow) * 100
-    "roc_weighted" (experiment): Score = sum(w_i * ROC_i) * 100
+    'sma_dist'   (default): Score = ((Close - SMA_slow) / SMA_slow) * 100
+    'roc_weight' (experiment): Score = sum(w_i * ROC_i) * 100
+
+    Args:
+        df:                 Indicator DataFrame indexed by date.
+        as_of_date:         Reference date string (YYYY-MM-DD).
+        symbol:             Instrument identifier (used in log messages only).
+        formula:            'sma_dist' or 'roc_weight'. Long-form aliases
+                            ('sma_distance', 'roc_weighted') are accepted.
+        active_roc_periods: Dict mapping label -> n_bars, e.g. {'roc_20d': 20}.
+                            Defaults to module-level ROC_PERIODS.
+        roc_weights:        Weight list aligned to active_roc_periods values.
+                            Used only when formula='roc_weight'.
+
+    Returns:
+        Tuple of (momentum_score, supplementary_roc_dict).
+        Both are None / {} if data is insufficient or formula is unknown.
     """
     if active_roc_periods is None:
         active_roc_periods = ROC_PERIODS
     if roc_weights is None:
         roc_weights = [0.20, 0.30, 0.50]
 
-    as_of_dt     = pd.Timestamp(as_of_date)
-    df_to_date   = df[df.index <= as_of_dt]
+    as_of_dt   = pd.Timestamp(as_of_date)
+    df_to_date = df[df.index <= as_of_dt]
 
     if df_to_date.empty:
         return None, {}
@@ -312,8 +341,17 @@ def calculate_momentum_score(
     if pd.isna(close) or close == 0:
         return None, {}
 
+    # ── Formula alias normalisation ──────────────────────────────────────────
+    # Short names are canonical (matching scripts 16, 17 and strategies.json).
+    # Long-form names accepted for backwards compatibility.
+    _FORMULA_ALIASES = {
+        "sma_distance": "sma_dist",
+        "roc_weighted": "roc_weight",
+    }
+    formula = _FORMULA_ALIASES.get(formula, formula)
+
     # ── Formula dispatch ─────────────────────────────────────────────────────
-    if formula == "sma_distance":
+    if formula == "sma_dist":
         if "sma_slow" not in df_to_date.columns:
             return None, {}
         sma_slow = latest["sma_slow"]
@@ -321,7 +359,7 @@ def calculate_momentum_score(
             return None, {}
         momentum_score = ((close - sma_slow) / sma_slow) * 100
 
-    elif formula == "roc_weighted":
+    elif formula == "roc_weight":
         period_list = list(active_roc_periods.values())
         if len(roc_weights) != len(period_list):
             roc_weights = [1.0 / len(period_list)] * len(period_list)
@@ -340,6 +378,7 @@ def calculate_momentum_score(
         if valid_terms == 0:
             return None, {}
         momentum_score = weighted_roc * 100
+
     else:
         logger.error(f"{symbol}: Unknown momentum formula '{formula}'")
         return None, {}
@@ -357,7 +396,6 @@ def calculate_momentum_score(
             supplementary[label] = None
 
     return float(momentum_score), supplementary
-
 
 
 # ============================================================================
@@ -379,7 +417,9 @@ def rank_momentum(as_of_date: str, momentum_cfg: Optional[Dict] = None) -> Tuple
         5. Assign ranks (1 = strongest momentum)
 
     Args:
-        as_of_date: Reference date (YYYY-MM-DD)
+        as_of_date:    Reference date (YYYY-MM-DD)
+        momentum_cfg:  Dict with keys: formula, sma_period, roc_periods, roc_weights.
+                       Defaults to sma_dist with module-level ROC_PERIODS.
 
     Returns:
         Tuple of:
@@ -387,20 +427,23 @@ def rank_momentum(as_of_date: str, momentum_cfg: Optional[Dict] = None) -> Tuple
             - stats: Summary statistics dict
     """
     if momentum_cfg is None:
-        momentum_cfg = {"formula": "sma_distance", "roc_periods": list(ROC_PERIODS.values()), "roc_weights": [0.20, 0.30, 0.50]}
+        momentum_cfg = {
+            "formula":     "sma_dist",
+            "roc_periods": list(ROC_PERIODS.values()),
+            "roc_weights": [0.20, 0.30, 0.50],
+        }
 
-    active_formula     = momentum_cfg.get("formula",     "sma_distance")
+    active_formula     = momentum_cfg.get("formula",     "sma_dist")
     active_roc_periods = {f"roc_{n}d": n for n in momentum_cfg.get("roc_periods", list(ROC_PERIODS.values()))}
     active_roc_weights = momentum_cfg.get("roc_weights", [0.20, 0.30, 0.50])
 
     qualified_trends = load_qualified_trends(as_of_date)
-    metadata = load_qualified_metadata()
+    metadata         = load_qualified_metadata()
 
-    total_qualified  = len(qualified_trends)
-    scored_count     = 0
-    failed_count     = 0
+    total_qualified = len(qualified_trends)
+    scored_count    = 0
+    failed_count    = 0
     failed_symbols: List[str] = []
-
     results: List[Dict] = []
 
     logger.info(f"\nCalculating momentum scores for {total_qualified} qualified symbols...")
@@ -415,9 +458,13 @@ def rank_momentum(as_of_date: str, momentum_cfg: Optional[Dict] = None) -> Tuple
             failed_symbols.append(symbol)
             continue
 
-        # Calculate momentum
-        # Calculate momentum
-        score, supplementary = calculate_momentum_score(df, as_of_date, symbol, formula=active_formula, active_roc_periods=active_roc_periods, roc_weights=active_roc_weights)
+        # Calculate momentum score
+        score, supplementary = calculate_momentum_score(
+            df, as_of_date, symbol,
+            formula=active_formula,
+            active_roc_periods=active_roc_periods,
+            roc_weights=active_roc_weights,
+        )
 
         if score is None:
             logger.warning(f"  SKIP {symbol}: insufficient data for momentum calculation")
@@ -426,7 +473,7 @@ def rank_momentum(as_of_date: str, momentum_cfg: Optional[Dict] = None) -> Tuple
             continue
 
         # Sanity cap: scores above 500 almost always indicate an unadjusted
-        # corporate action (reverse split) inflating the SMA_200 baseline.
+        # corporate action (reverse split) inflating the SMA baseline.
         # Flag for human review; still write to ranked output for transparency.
         MOMENTUM_SCORE_WARN_THRESHOLD = 500
         data_quality_flag = ''
@@ -443,41 +490,40 @@ def rank_momentum(as_of_date: str, momentum_cfg: Optional[Dict] = None) -> Tuple
         meta = metadata.get(symbol, {})
 
         entry = {
-            # ââ Identification ââââââââââââââââââââââââââââââââââââââââââââââ
+            # -- Identification -----------------------------------------------
             'symbol':       symbol,
             'name':         meta.get('name', ''),
             'exchange':     meta.get('exchange', trend_data.get('exchange', '')),
             'sector':       meta.get('sector', ''),
             'asset_class':  meta.get('instrument_type', ''),
 
-            # ââ Primary ranking score ââââââââââââââââââââââââââââââââââââââââ
-            'momentum_score':   round(score, 4),
+            # -- Primary ranking score ----------------------------------------
+            'momentum_score': round(score, 4),
             # rank assigned after sorting
 
-            # ââ Trend qualification snapshot (from Script 6) âââââââââââââââââ
-            'close':        trend_data['close'],
-            'sma_fast':       trend_data['sma_fast'],
-            'sma_slow':      trend_data['sma_slow'],
-            'adx':       trend_data['adx'],
-            'atr_pct':   trend_data['atr_pct'],
+            # -- Trend qualification snapshot (from Script 6) -----------------
+            'close':    trend_data['close'],
+            'sma_fast': trend_data['sma_fast'],
+            'sma_slow': trend_data['sma_slow'],
+            'adx':      trend_data['adx'],
+            'atr_pct':  trend_data['atr_pct'],
 
-            # ââ Supplementary ROC metrics (transparency, not for ranking) ââââ
-            'roc_20d':      supplementary.get('roc_20d'),
-            'roc_60d':      supplementary.get('roc_60d'),
-            'roc_120d':     supplementary.get('roc_120d'),
+            # -- Supplementary ROC metrics (transparency, not for ranking) -----
+            'roc_20d':  supplementary.get('roc_20d'),
+            'roc_60d':  supplementary.get('roc_60d'),
+            'roc_120d': supplementary.get('roc_120d'),
 
-            # ââ Audit trail ââââââââââââââââââââââââââââââââââââââââââââââââââ
-            # ── Audit trail ──────────────────────────────────────────────────
+            # -- Audit trail --------------------------------------------------
             'as_of_date':        as_of_date,
             'scoring_formula':   active_formula,
-            'data_quality_flag': data_quality_flag,   # '' = clean; 'extreme_momentum_score' = review
+            'data_quality_flag': data_quality_flag,  # '' = clean
         }
 
         results.append(entry)
         scored_count += 1
 
     # -------------------------------------------------------------------------
-    # Sort descending by momentum_score â deterministic tie-break by symbol
+    # Sort descending by momentum_score — deterministic tie-break by symbol
     # -------------------------------------------------------------------------
     results.sort(key=lambda x: (-x['momentum_score'], x['symbol']))
 
@@ -495,16 +541,16 @@ def rank_momentum(as_of_date: str, momentum_cfg: Optional[Dict] = None) -> Tuple
         'total_scored':          scored_count,
         'total_failed':          failed_count,
         'failed_symbols':        failed_symbols,
-        'score_max':             round(max(scores), 4)   if scores else None,
-        'score_min':             round(min(scores), 4)   if scores else None,
-        'score_mean':            round(float(np.mean(scores)), 4) if scores else None,
+        'score_max':             round(max(scores), 4)              if scores else None,
+        'score_min':             round(min(scores), 4)              if scores else None,
+        'score_mean':            round(float(np.mean(scores)), 4)   if scores else None,
         'score_median':          round(float(np.median(scores)), 4) if scores else None,
-        'score_std':             round(float(np.std(scores)), 4)  if scores else None,
+        'score_std':             round(float(np.std(scores)), 4)    if scores else None,
         'positive_momentum_pct': round(
             sum(1 for s in scores if s > 0) / len(scores) * 100, 1
         ) if scores else 0,
-        'scoring_formula':       'Momentum_Score = ((Close - SMA_200) / SMA_200) Ã 100',
-        'generated_at':          datetime.now().isoformat(),
+        'scoring_formula':  active_formula,
+        'generated_at':     datetime.now().isoformat(),
     }
 
     return results, stats
@@ -520,36 +566,37 @@ def save_momentum_ranked(ranked_list: List[Dict], output_file: Path) -> None:
 
     Format:
         {
-            "metadata": { "as_of_date": ..., "total_ranked": ... },
+            "metadata": { "as_of_date": ..., "total_ranked": ..., "scoring_formula": ... },
             "ranked": [ { rank, symbol, momentum_score, ... }, ... ]
         }
     """
-    SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
+    scoring_formula = ranked_list[0].get('scoring_formula', 'sma_dist') if ranked_list else 'sma_dist'
     output = {
         "metadata": {
-            "as_of_date":   ranked_list[0]['as_of_date'] if ranked_list else None,
-            "total_ranked": len(ranked_list),
-            "scoring_formula": "Momentum_Score = ((Close - SMA_200) / SMA_200) Ã 100",
-            "generated_at": datetime.now().isoformat(),
+            "as_of_date":      ranked_list[0]['as_of_date'] if ranked_list else None,
+            "total_ranked":    len(ranked_list),
+            "scoring_formula": scoring_formula,
+            "generated_at":    datetime.now().isoformat(),
         },
-        "ranked": ranked_list
+        "ranked": ranked_list,
     }
 
     with open(output_file, 'w') as f:
         json.dump(output, f, indent=2, default=str)
 
-    logger.info(f"â Saved {len(ranked_list)} ranked entries → {output_file}")
+    logger.info(f"Saved {len(ranked_list)} ranked entries -> {output_file}")
 
 
 def save_momentum_summary(stats: Dict, output_file: Path) -> None:
     """Save run statistics to JSON"""
-    SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_file, 'w') as f:
         json.dump(stats, f, indent=2, default=str)
 
-    logger.info(f"â Saved momentum summary → {output_file}")
+    logger.info(f"Saved momentum summary -> {output_file}")
 
 
 def save_momentum_csv(ranked_list: List[Dict], output_file: Path) -> None:
@@ -559,41 +606,41 @@ def save_momentum_csv(ranked_list: List[Dict], output_file: Path) -> None:
     Columns:
         rank, symbol, name, exchange, sector, asset_class,
         momentum_score, close, sma_fast, sma_slow, adx, atr_pct,
-        roc_20d, roc_60d, roc_120d, as_of_date
+        roc_20d, roc_60d, roc_120d, as_of_date, scoring_formula
     """
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
     if not ranked_list:
-        logger.warning("Empty ranked list â skipping CSV export")
+        logger.warning("Empty ranked list — skipping CSV export")
         return
 
     df = pd.DataFrame(ranked_list)
 
-    # Column order for readability
     col_order = [
         'rank', 'symbol', 'name', 'exchange', 'sector', 'asset_class',
         'momentum_score',
         'close', 'sma_fast', 'sma_slow', 'adx', 'atr_pct',
         'roc_20d', 'roc_60d', 'roc_120d',
-        'as_of_date', 'scoring_formula'
+        'as_of_date', 'scoring_formula',
     ]
     available_cols = [c for c in col_order if c in df.columns]
     df = df[available_cols]
 
     df.to_csv(output_file, index=False, float_format='%.4f')
-    logger.info(f"â Saved CSV report → {output_file}")
+    logger.info(f"Saved CSV report -> {output_file}")
 
 
 def print_top_n_summary(ranked_list: List[Dict], n: int = 20) -> None:
     """Print a formatted top-N ranking table to console"""
     top_n = ranked_list[:n]
 
+    as_of = ranked_list[0]['as_of_date'] if ranked_list else 'N/A'
     logger.info(f"\n{'='*80}")
-    logger.info(f"TOP {n} BY MOMENTUM SCORE  (as of {ranked_list[0]['as_of_date'] if ranked_list else 'N/A'})")
+    logger.info(f"TOP {n} BY MOMENTUM SCORE  (as of {as_of})")
     logger.info(f"{'='*80}")
     header = (
         f"{'Rank':>4}  {'Symbol':<16} {'Score':>8}  "
-        f"{'Close':>8}  {'SMA200':>8}  {'ADX':>6}  {'ATR%':>6}  "
+        f"{'Close':>8}  {'SMA_slow':>8}  {'ADX':>6}  {'ATR%':>6}  "
         f"{'ROC20':>7}  {'ROC60':>7}"
     )
     logger.info(header)
@@ -622,17 +669,21 @@ def print_top_n_summary(ranked_list: List[Dict], n: int = 20) -> None:
 def parse_arguments() -> argparse.Namespace:
     """Parse and validate command-line arguments"""
     parser = argparse.ArgumentParser(
-        description='Momentum Ranker â Script 7 (v3.2)',
+        description='Momentum Ranker — Script 7 (v3.9)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Rank qualified universe as of month-end
+    # Rank qualified universe as of month-end (all active strategies)
     python scripts/07_rank_momentum.py --as-of-date 2026-01-31
+
+    # Single strategy
+    python scripts/07_rank_momentum.py --as-of-date 2026-01-31 --strategy sma_dist
+    python scripts/07_rank_momentum.py --as-of-date 2026-01-31 --strategy roc_weight
 
     # Preview top 30 in console
     python scripts/07_rank_momentum.py --as-of-date 2026-01-31 --top 30
 
-    # Dry run â compute scores but do not write output files
+    # Dry run — compute scores but do not write output files
     python scripts/07_rank_momentum.py --as-of-date 2026-01-31 --dry-run
 
 Dependencies (must be run first, in order):
@@ -642,7 +693,7 @@ Dependencies (must be run first, in order):
     04_screen_universe.py
     05_calculate_indicators.py
     06_qualify_trends.py
-    07_rank_momentum.py  ← THIS SCRIPT
+    07_rank_momentum.py  <- THIS SCRIPT
         """
     )
 
@@ -650,32 +701,32 @@ Dependencies (must be run first, in order):
         '--as-of-date',
         required=True,
         metavar='YYYY-MM-DD',
-        help='Reference date for momentum calculation'
+        help='Reference date for momentum calculation',
     )
     parser.add_argument(
         '--top',
         type=int,
         default=20,
         metavar='N',
-        help='Number of top entries to display in console summary (default: 20)'
+        help='Number of top entries to display in console summary (default: 20)',
     )
     parser.add_argument(
         '--dry-run',
         action='store_true',
-        help='Compute scores but skip writing output files'
+        help='Compute scores but skip writing output files',
     )
     parser.add_argument(
         '--config',
         metavar='PATH',
         default=None,
-        help='Path to a strategy parameters JSON (legacy experiment mode).'
+        help='Path to a strategy parameters JSON (legacy experiment mode).',
     )
     parser.add_argument(
         '--output-dir',
         metavar='PATH',
         dest='output_dir',
         default=None,
-        help='Output directory (legacy experiment mode).'
+        help='Output directory (legacy experiment mode).',
     )
     add_strategy_argument(parser)
 
@@ -683,7 +734,7 @@ Dependencies (must be run first, in order):
 
 
 # ============================================================================
-# MAIN
+# PER-STRATEGY RUNNER
 # ============================================================================
 
 def _run_for_strategy(
@@ -708,7 +759,7 @@ def _run_for_strategy(
     strat_reports.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"\n[{strategy.name}] -- {strategy.label} ({'LIVE' if strategy.deployed else 'PAPER'}) --")
-    logger.info(f"[{strategy.name}] Formula : {momentum_cfg.get('formula', 'sma_distance')}")
+    logger.info(f"[{strategy.name}] Formula : {momentum_cfg.get('formula', 'sma_dist')}")
     logger.info(f"[{strategy.name}] Output  : {strat_signals}")
 
     try:
@@ -736,9 +787,13 @@ def _run_for_strategy(
         logger.error(f"[{strategy.name}] Error writing outputs: {e}", exc_info=True)
         return 1
 
-    logger.info(f"[{strategy.name}] Ranked {stats['total_scored']:,} → {strat_signals}")
+    logger.info(f"[{strategy.name}] Ranked {stats['total_scored']:,} -> {strat_signals}")
     return 0
 
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 def main() -> int:
     start_time = datetime.now()
@@ -762,8 +817,8 @@ def main() -> int:
     # ── Resolve strategies ────────────────────────────────────────────────────
     try:
         strategies = resolve_strategies(
-            strategy_arg = args.strategy,
-            project_root = PROJECT_ROOT,
+            strategy_arg=args.strategy,
+            project_root=PROJECT_ROOT,
         )
     except (FileNotFoundError, ValueError) as exc:
         logger.error(f"Strategy resolution failed: {exc}")
@@ -774,10 +829,10 @@ def main() -> int:
     failed: list = []
     for strategy in strategies:
         rc = _run_for_strategy(
-            strategy   = strategy,
-            as_of_date = as_of_date,
-            top        = args.top,
-            dry_run    = args.dry_run,
+            strategy=strategy,
+            as_of_date=as_of_date,
+            top=args.top,
+            dry_run=args.dry_run,
         )
         if rc != 0:
             failed.append(strategy.name)
